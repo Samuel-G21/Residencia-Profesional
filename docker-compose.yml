@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # 1. Servicio de Base de Datos (MySQL)
+  db:
+    image: mysql:8.0
+    container_name: pemex_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: pemex_db
+      MYSQL_USER: pemex_user
+      MYSQL_PASSWORD: pemex_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  # 2. Servicio del Backend (Python/Flask)
+  api:
+    build: ./backend
+    container_name: pemex_backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - FLASK_ENV=development
+    depends_on:
+      - db
+
+  # 3. Servicio del Frontend (React)
+  interfaz:
+    build: ./frontend
+    container_name: pemex_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - api
+
+volumes:
+  db_data:
