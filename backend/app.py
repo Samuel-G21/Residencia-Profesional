@@ -1,8 +1,16 @@
 import os
+import subprocess
+import zipfile
+import io
 import pandas as pd
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from docxtpl import DocxTemplate
+from pypdf import PdfWriter
+import io
+import re
+import pdfplumber
+from flask import send_file
 
 app = Flask(__name__)
 
@@ -136,6 +144,137 @@ def generate_docs():
             "status": "error",
             "message": f"Error al generar los documentos: {str(e)}"
         }), 500
+
+@app.route('/api/download-docs/<id_evento>', methods=['GET'])
+def download_docs(id_evento):
+    try:
+        output_dir = 'outputs'
+        id_evento_str = str(id_evento).strip()
+        
+        # 1. Encontrar todos los Word generados previamente para este evento
+        docx_files = [f for f in os.listdir(output_dir) if f.startswith(id_evento_str) and f.endswith('.docx')]
+        
+        if not docx_files:
+            return jsonify({"status": "error", "message": f"No se encontraron documentos Word para el evento {id_evento_str}"}), 404
+
+        pdf_files = []
+        
+        # 2. Convertir cada DOCX a PDF usando LibreOffice en el contenedor
+        for docx in docx_files:
+            docx_path = os.path.join(output_dir, docx)
+            # Llamada al sistema Linux para convertir el archivo
+            subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', output_dir, docx_path], check=True)
+            
+            pdf_filename = docx.replace('.docx', '.pdf')
+            pdf_files.append(pdf_filename)
+
+        # 3. Unir todos los PDFs en un PDF Maestro
+        merger = PdfWriter()
+        for pdf in pdf_files:
+            merger.append(os.path.join(output_dir, pdf))
+
+        maestro_filename = f"{id_evento_str}_PDF_Maestro.pdf"
+        maestro_path = os.path.join(output_dir, maestro_filename)
+        merger.write(maestro_path)
+        merger.close()
+
+        # 4. Crear el archivo ZIP en memoria RAM
+        memory_file = io.BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # A) Agregar el PDF Maestro listo para imprimir
+            zf.write(maestro_path, maestro_filename)
+            # B) Agregar los archivos originales DOCX
+            for docx in docx_files:
+                zf.write(os.path.join(output_dir, docx), docx)
+        
+        memory_file.seek(0)
+
+        # 5. Limpieza del servidor: Borrar PDFs individuales y maestro (conservando los DOCX originales)
+        for pdf in pdf_files:
+            os.remove(os.path.join(output_dir, pdf))
+        os.remove(maestro_path)
+
+        # 6. Retornar el ZIP descargable
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f"Expediente_{id_evento_str}.zip"
+        )
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Error al empaquetar los documentos: {str(e)}"}), 500
+
+@app.route('/api/extract-pdf', methods=['POST'])
+def extract_pdf():
+    if 'file' not in request.files:
+        return jsonify({"status": "error", "message": "No se encontro ningun archivo adjunto"}), 400
+
+    file = request.files['file']
+
+    if file.filename == '' or not file.filename.endswith('.pdf'):
+        return jsonify({"status": "error", "message": "Formato invalido. Por favor sube un archivo .pdf"}), 400
+    
+    try:
+        datos_eventos = {}
+        participantes = []
+
+        # LECTURA DE PDF
+        with pdfplumber.open(file) as pdf:
+            texto_completo =""
+            for page in pdf.pages:
+                texto_completo += page.extract_text() + "\n"
+            
+            # Extraccion de cabecera
+            id_sirhn = re.search (r"ID SIRHN GENERADO\s*(\d+)", texto_completo)
+            datos_eventos['ID_Evento (SIRHN)'] = id_sirhn.group(1) if id_sirhn else ""
+
+            nombre_evento = re.search(r"Nombre del\s*\n?(.+?)\s*\n?Tipo de Formación", texto_completo, re.IGNORECASE)
+            datos_evento['Nombre del Evento'] = nombre_evento.group(1).strip() if nombre_evento else ""
+            
+            fecha_inicio = re.search(r"Fecha de inicio\s*(\d{2}/\d{2}/\d{4})", texto_completo)
+            datos_evento['Fecha Inicio'] = fecha_inicio.group(1) if fecha_inicio else ""
+            
+            # Extraer Tabla de Participantes
+            for page in pdf.pages:
+                tablas = page.extract_tables()
+                for tabla in tablas:
+                    if len(tabla) > 0 and tabla[0] and "Ficha" in str(tabla[0]):
+                        for fila in tabla[1:]:
+                            if len(fila) >= 5 and fila[1]: 
+                                ficha = str(fila[1]).replace('\n', '').strip()
+                                if ficha.isdigit():
+                                    participantes.append({
+                                        "No.": fila[0].replace('\n', '').strip() if fila[0] else "",
+                                        "Ficha": ficha,
+                                        "Nombre": fila[2].replace('\n', ' ').strip() if fila[2] else "",
+                                        "Nivel": fila[3].replace('\n', '').strip() if fila[3] else "",
+                                        "Categoría": fila[4].replace('\n', ' ').strip() if fila[4] else ""
+                                    })
+        
+        # Crear el archivo Excel en la memoria RAM (sin guardarlo en el disco duro)
+        memory_file = io.BytesIO()
+        df_evento = pd.DataFrame([datos_evento])
+        df_participantes = pd.DataFrame(participantes)
+        
+        with pd.ExcelWriter(memory_file, engine='openpyxl') as writer:
+            df_evento.to_excel(writer, sheet_name='Datos Generales', index=False)
+            df_participantes.to_excel(writer, sheet_name='Participantes', index=False)
+            
+        memory_file.seek(0)
+        
+        # Enviar el archivo Excel de regreso al cliente (React o Postman)
+        nombre_descarga = f"Extraccion_{datos_evento.get('ID_Evento (SIRHN)', 'SCPM01')}.xlsx"
+        
+        return send_file(
+            memory_file,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=nombre_descarga
+        )
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Error al procesar el PDF: {str(e)}"}), 500
 
 
 if __name__ == '__main__':

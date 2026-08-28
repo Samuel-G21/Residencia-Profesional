@@ -1,18 +1,21 @@
-# 1.- Uso de la imagen oficial de Python "slim"
+# 1. Usar una imagen oficial de Python ligera
 FROM python:3.9-slim
 
-# 2.- Establecemos el directorio de trabajo en el contendor
+# 2. Instalar LibreOffice para la conversión de Word a PDF
+RUN apt-get update && apt-get install -y libreoffice --no-install-recommends
+
+# 3. Establecer el directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# 3.- Copiar el archivo "requirements.txt" y ejecutarlo
+# 4. Copiar el archivo de dependencias y ejecutarlas
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4.- Copia el el resto del backend
+# 5. Copiar el resto del código del backend
 COPY . .
 
-# 5.- Abrir el puerto que usara el backend
+# 6. Exponer el puerto que usará Flask
 EXPOSE 5000
 
-# 6.- Comando de arranque inicial
+# 7. Comando por defecto para arrancar la aplicación
 CMD ["flask", "run", "--host=0.0.0.0"]
