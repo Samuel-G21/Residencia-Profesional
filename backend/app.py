@@ -2,279 +2,457 @@ import os
 import subprocess
 import zipfile
 import io
+import shutil
 import pandas as pd
-from flask import Flask, request, jsonify
+import pymysql
+import re
+import pdfplumber
+from contextlib import closing
+from flask import send_file, Flask, request, jsonify
 from flask_cors import CORS
 from docxtpl import DocxTemplate
 from pypdf import PdfWriter
-import io
-import re
-import pdfplumber
-from flask import send_file
 
 app = Flask(__name__)
-
-# Se habilitan los CORS para que la parte de Frontends pueda realizar peticiones
+# Habilitamos CORS para la comunicación con React
 CORS(app)
+
+# ==========================================
+# 1. CONEXIÓN A BASE DE DATOS
+# ==========================================
+def get_db_connection():
+    try:
+        conexion = pymysql.connect(
+            host=os.getenv('DB_HOST', 'db'),
+            user=os.getenv('DB_USER', 'pemex_user'),
+            password=os.getenv('DB_PASSWORD', 'pemex_password'),
+            database=os.getenv('DB_NAME', 'pemex_db'),
+            cursorclass=pymysql.cursors.DictCursor
+        )
+        return conexion
+    except Exception as e:
+        print(f"Error conectando a la BD: {e}")
+        return None
 
 @app.route('/', methods=['GET'])
 def health_check():
-    return jsonify({
-        "status": "success",
-        "message": "Sistema de PEMEX en correcto funcionamiento"
-    }), 200
+    return jsonify({"status": "success", "message": "Sistema de PEMEX Activo (Nivel Dios)"}), 200
 
-# Endpoint para subir el archivo Excel
+# ==========================================
+# 2. CARGA Y LECTURA DE EXCEL
+# ==========================================
 @app.route('/api/upload-excel', methods=['POST'])
 def upload_excel():
-    # 1. Validar que la petición traiga un archivo
     if 'file' not in request.files:
         return jsonify({"status": "error", "message": "No se encontró ningún archivo adjunto"}), 400
     
     file = request.files['file']
-    
-    # 2. Validar que el archivo no esté vacío y sea .xlsx
-    if file.filename == '':
-        return jsonify({"status": "error", "message": "No seleccionaste ningún archivo"}), 400
-        
-    if not file.filename.endswith('.xlsx'):
-        return jsonify({"status": "error", "message": "Formato inválido. Por favor sube un archivo .xlsx"}), 400
+    if file.filename == '' or not file.filename.endswith('.xlsx'):
+        return jsonify({"status": "error", "message": "Formato inválido (.xlsx requerido)"}), 400
         
     try:
-        # 3. Leer el Excel directamente en memoria
         df = pd.read_excel(file)
-        
-        # --- AQUÍ ESTABAN LAS LÍNEAS PERDIDAS ---
-        # Asegúrate de que estos sean los nombres exactos en tu archivo Excel
-        columna_id = 'ID' # Si en tu Excel dice 'Clave del Evento', cámbialo aquí
+        columna_id = 'ID'
         columna_nombre = 'NOMBRE DEL EVENTO'
         
-        # 4. Extraer solo las columnas de interés y eliminar los duplicados
+        if columna_id not in df.columns or columna_nombre not in df.columns:
+            return jsonify({"status": "error", "message": "El Excel no tiene las columnas esperadas"}), 400
+
         cursos_df = df[[columna_id, columna_nombre]].drop_duplicates()
-        
-        # 5. Convertir a un formato amigable para React (Diccionario/JSON)
         cursos_lista = cursos_df.rename(columns={columna_id: 'id', columna_nombre: 'nombre'}).to_dict('records')
         
-        # 6. Retornar los datos
-        return jsonify({
-            "status": "success",
-            "data": cursos_lista
-        }), 200
+        return jsonify({"status": "success", "data": cursos_lista}), 200
 
     except Exception as e:
-        # Capturar cualquier error
         return jsonify({"status": "error", "message": f"Error al procesar el Excel: {str(e)}"}), 500
 
-# Endpoint para generar documentos
+# ==========================================
+# 3. MOTOR DE INYECCIÓN (WORD) - INDIVIDUALES Y GRUPALES
+# ==========================================
+def safe_str(val):
+    if pd.isna(val) or val == '':
+        return ""
+    try:
+        f_val = float(val)
+        if f_val.is_integer():
+            return str(int(f_val))
+        return str(val).strip()
+    except (ValueError, TypeError):
+        return str(val).strip()
+
 @app.route('/api/generate-docs', methods=['POST'])
 def generate_docs():
-    # Validacion de peticion con archivo Excel y el ID del evento
     if 'file' not in request.files or 'id_evento' not in request.form:
-        return jsonify({"status": "error", "message": "Falta el archivo Excel o el ID del evento"}), 400
+        return jsonify({"status": "error", "message": "Faltan datos de entrada"}), 400
 
     file = request.files['file']
-    id_evento = request.form['id_evento']
+    id_evento = re.sub(r'[^a-zA-Z0-9_-]', '', str(request.form['id_evento']).strip())
 
     try:
-        # Lectura del archivo Excel
         df = pd.read_excel(file)
-
-        # Asegurarnos de que el ID en Pandas y el de la petición sean texto para evitar errores de búsqueda
-        columna_id = 'ID' # O puede ser 'Clave del Evento'
-        df[columna_id] = df[columna_id].astype(str)
-        id_evento_str = str(id_evento).strip()
-
-        # Filtrar a los trabajadores que pertenecen al evento
-        trabajadores_curso = df[df[columna_id] == id_evento_str]
-
-        if trabajadores_curso.empty:
-            return jsonify({"status": "error", "message": f"No se encontraron trabajadores para el curso {id_evento}"}), 404
-
-        # Procesar y generar Word por cada trabajador
-        documentos_generados =[]
-
-        # Usaremos el formato SCPM-04 como prueba
-        template_path = os.path.join('templates', 'SCPM-04.docx')
-
-        if not os.path.exists(template_path):
-            return jsonify({"status": "error", "message": "Falta colocar el archivo SCPM-04.docx en la carpeta templates/"}), 500
+        df = df.fillna('')
+        columna_id = 'ID'
         
+        if columna_id not in df.columns:
+            return jsonify({"status": "error", "message": "Falta la columna 'ID'"}), 400
+
+        df[columna_id] = df[columna_id].apply(safe_str)
+        trabajadores_curso = df[df[columna_id] == id_evento]
+        
+        if trabajadores_curso.empty:
+            return jsonify({"status": "error", "message": f"Sin trabajadores para el curso {id_evento}"}), 404
+
+        # Crear/Limpiar carpeta temporal
+        evento_dir = os.path.join('outputs', id_evento)
+        os.makedirs(evento_dir, exist_ok=True)
+        for f in os.listdir(evento_dir):
+            os.remove(os.path.join(evento_dir, f))
+
+        # --- CARGA DEL CATÁLOGO MAESTRO DE CURPS ---
+        diccionario_curps = {}
+        ruta_catalogo = os.path.join('catalogos', 'CURP.xlsx')
+        if os.path.exists(ruta_catalogo):
+            try:
+                df_curps = pd.read_excel(ruta_catalogo)
+                df_curps['FICHA'] = df_curps['FICHA'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                df_curps['CURP'] = df_curps['CURP'].astype(str).str.strip().str.upper()
+                diccionario_curps = dict(zip(df_curps['FICHA'], df_curps['CURP']))
+            except Exception as e:
+                print(f"Advertencia: Error al cargar catálogo de CURPs: {e}")
+
+        # Variables Generales del Evento
+        primer_registro = trabajadores_curso.iloc[0]
+        nombre_curso = str(primer_registro.get('NOMBRE DEL EVENTO', '')).strip().upper()
+        duracion_curso = safe_str(primer_registro.get('DURACION HORAS', ''))
+        
+        dia_inicio_evt = safe_str(primer_registro.get('dia i', '')).zfill(2)
+        mes_inicio_evt = safe_str(primer_registro.get('mes i', '')).zfill(2)
+        anio_inicio_evt = safe_str(primer_registro.get('año i', ''))
+        dia_term_evt = safe_str(primer_registro.get('dia T', '')).zfill(2)
+        mes_term_evt = safe_str(primer_registro.get('mes T', '')).zfill(2)
+        anio_term_evt = safe_str(primer_registro.get('año T', ''))
+        
+        fecha_inicio_completa = f"{dia_inicio_evt}/{mes_inicio_evt}/{anio_inicio_evt}" if anio_inicio_evt else ""
+        fecha_termino_completa = f"{dia_term_evt}/{mes_term_evt}/{anio_term_evt}" if anio_term_evt else ""
+
+        nombre_instructor = str(primer_registro.get('NOMBRE INSTRUCTOR', '')).strip().title()
+        ficha_instructor = safe_str(primer_registro.get('FICHA INSTRUCTOR', ''))
+        nombre_supervisor = str(primer_registro.get('NOMBRE SUPERVISOR', '')).strip().title()
+        ficha_supervisor = safe_str(primer_registro.get('FICHA SUPERVISOR', ''))
+
+        # Separación de Plantillas
+        plantillas_individuales = [
+            '1. Cédula registro actualizado 2025 COMBIANADA.docx', 
+            '2. Constancias de Habilidades DC-3 2026 COMBINADA.docx', 
+            'SCPM-04 COMBINADA.docx', 
+            'SCPM-04.docx', 
+            'SCPM-06 COMBINADA.docx'
+        ]
+        plantillas_evento = [
+            '5. Carta Compromiso Instructor 2026 COMBINADA.docx', 
+            'FVC.docx', 
+            'Informe Técnico Instructor 2025.docx', 
+            'SCPM-05 2025.docx'
+        ]
+
+        documentos_generados = []
+        historial_data = []
+        lista_participantes = []
+        
+        # A) INYECCIÓN POR TRABAJADOR (INDIVIDUAL)
         for index, row in trabajadores_curso.iterrows():
-            # Aplicar reglas de limpieza de datos
-            ficha = str(int(row['FICHA'])) if pd.notna(row['FICHA']) else ""
-            nombres = str(row['NOMBRE']).strip().title() if pd.notna(row['NOMBRE']) else ""
-            paterno = str(row['PRIMER APELLIDO']).strip().title() if pd.notna(row['PRIMER APELLIDO']) else ""
-            materno = str(row['SEGUNDO APELLIDO']).strip().title() if pd.notna(row['SEGUNDO APELLIDO']) else ""
+            ficha = safe_str(row.get('FICHA', ''))
+            nombres = str(row.get('NOMBRE(S)', '')).strip().title()
+            paterno = str(row.get('PRIMER APELLIDO', '')).strip().title()
+            materno = str(row.get('SEGUNDO APELLIDO', '')).strip().title()
             nombre_completo = f"{paterno} {materno} {nombres}".strip()
+            
+            # Buscar CURP en catálogo maestro
+            curp = diccionario_curps.get(ficha, "CURP_NO_ENCONTRADA")
+            
+            # Datos de la fila actual para la tabla maestra SCPM-05
+            if ficha:
+                lista_participantes.append({
+                    "ficha": ficha,
+                    "nombre_completo": nombre_completo,
+                    "categoria": str(row.get('CATEGORÍA', row.get('CATEGORIA', ''))).strip(),
+                    "nivel": safe_str(row.get('NIVEL', '')),
+                    "departamento": str(row.get('DEPARTAMENTO', '')).strip()
+                })
+                historial_data.append((id_evento, ficha, nombre_completo))
 
-            dia_inicio = str(row['dia i']).zfill(2) if pd.notna(row['dia i']) else ""
-            mes_inicio = str(row['mes i']).zfill(2) if pd.notna(row['mes i']) else ""
-            anio_inicio = str(row['año i']).split('.')[0] if pd.notna(row['año i']) else ""
-
-            # Construir el contexto para Jinja2
-            context = {
-                "ficha": ficha,
-                "apellido_paterno": paterno,
+            context_individual = {
+                "ficha": ficha, "ficha_trabajador": ficha, 
+                "apellido_paterno": paterno, 
                 "apellido_materno": materno,
-                "nombres": nombres,
-                "nombre_completo": nombre_completo,
-                "dia_inicio": dia_inicio,
-                "mes_inicio": mes_inicio,
-                "anio_inicio": anio_inicio,
-                "nombre_curso": str(row['NOMBRE DEL EVENTO']).strip().upper() if pd.notna(row['NOMBRE DEL EVENTO']) else ""
+                "nombre": nombres, "nombres": nombres, 
+                "nombre_completo": nombre_completo, "nombre_trabajador": nombre_completo,
+                "curp": curp,
+                "nombre_evento": nombre_curso, "clave_evento": id_evento,
+                "duracion": duracion_curso,
+                "fecha_inicio": fecha_inicio_completa, "fecha_termino": fecha_termino_completa,
+                "nombre_instructor": nombre_instructor, "ficha_instructor": ficha_instructor,
+                "nombre_supervisor": nombre_supervisor, "ficha_supervisor": ficha_supervisor
             }
 
-            # Implantamos los datos en el word
-            doc = DocxTemplate(template_path)
-            doc.render(context)
+            for nombre_plantilla in plantillas_individuales:
+                template_path = os.path.join('templates', nombre_plantilla)
+                if os.path.exists(template_path):
+                    try:
+                        doc = DocxTemplate(template_path)
+                        doc.render(context_individual)
+                        nombre_limpio = nombre_plantilla.replace('.docx', '')
+                        ficha_segura = re.sub(r'[^a-zA-Z0-9]', '', ficha)
+                        nombre_archivo = f"{id_evento}_{ficha_segura}_{nombre_limpio}.docx"
+                        output_path = os.path.join(evento_dir, nombre_archivo)
+                        doc.save(output_path)
+                        documentos_generados.append(nombre_archivo)
+                    except Exception as ex:
+                        print(f"Error renderizando {nombre_plantilla} ficha {ficha}: {ex}")
 
-            # Guardar archivo generado en /outputs (Ejemplo: 50693032 SCPM-04_123456.docx)
-            nombre_archivo = f"{id_evento_str} SCPM-04.docx"
-            output_path = os.path.join('outputs', nombre_archivo)
+        # B) INYECCIÓN GRUPAL (POR EVENTO)
+        context_evento = {
+            "clave_evento": id_evento,
+            "nombre_evento": nombre_curso,
+            "duracion": duracion_curso,
+            "fecha_inicio": fecha_inicio_completa,
+            "fecha_termino": fecha_termino_completa,
+            "dia_inicio": dia_inicio_evt, "mes_inicio": mes_inicio_evt, "anio_inicio": anio_inicio_evt,
+            "dia_termino": dia_term_evt, "mes_termino": mes_term_evt, "anio_termino": anio_term_evt,
+            "nombre_instructor": nombre_instructor, "ficha_instructor": ficha_instructor,
+            "nombre_supervisor": nombre_supervisor, "ficha_supervisor": ficha_supervisor,
+            "lista_participantes": lista_participantes # <- INYECCIÓN DE LA TABLA MAESTRA
+        }
+        
+        for nombre_plantilla in plantillas_evento:
+            template_path = os.path.join('templates', nombre_plantilla)
+            if os.path.exists(template_path):
+                try:
+                    doc = DocxTemplate(template_path)
+                    doc.render(context_evento)
+                    nombre_limpio = nombre_plantilla.replace('.docx', '')
+                    nombre_archivo = f"{id_evento}_EVENTO_{nombre_limpio}.docx" 
+                    output_path = os.path.join(evento_dir, nombre_archivo)
+                    doc.save(output_path)
+                    documentos_generados.append(nombre_archivo)
+                except Exception as ex:
+                    print(f"Error renderizando {nombre_plantilla}: {ex}")
 
-            documentos_generados.append(nombre_archivo)
+        # C) ALMACENAMIENTO EN BASE DE DATOS
+        conexion = get_db_connection()
+        if conexion:
+            with closing(conexion):
+                with conexion.cursor() as cursor:
+                    cursor.execute("INSERT IGNORE INTO cursos (id_evento, nombre_evento) VALUES (%s, %s)", (id_evento, nombre_curso))
+                    if historial_data:
+                        cursor.executemany("INSERT INTO historial_capacitacion (id_evento, ficha_trabajador, nombre_trabajador) VALUES (%s, %s, %s)", historial_data)
+                conexion.commit()
 
         return jsonify({
             "status": "success",
-            "message": f"Se generaron {len(documentos_generados)} documentos SCPM-04.",
+            "message": f"¡Éxito! Se generaron {len(documentos_generados)} documentos.",
             "data": documentos_generados
         }), 200
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"Error al generar los documentos: {str(e)}"
-        }), 500
 
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Error del Motor: {str(e)}"}), 500
+
+
+# ==========================================
+# 4. COLA DE IMPRESIÓN (PDF & ZIP)
+# ==========================================
 @app.route('/api/download-docs/<id_evento>', methods=['GET'])
 def download_docs(id_evento):
     try:
-        output_dir = 'outputs'
-        id_evento_str = str(id_evento).strip()
+        id_evento_str = re.sub(r'[^a-zA-Z0-9_-]', '', str(id_evento).strip())
+        evento_dir = os.path.join('outputs', id_evento_str)
         
-        # 1. Encontrar todos los Word generados previamente para este evento
-        docx_files = [f for f in os.listdir(output_dir) if f.startswith(id_evento_str) and f.endswith('.docx')]
-        
+        if not os.path.exists(evento_dir):
+            return jsonify({"status": "error", "message": "No hay documentos generados para este evento."}), 404
+
+        docx_files = [f for f in os.listdir(evento_dir) if f.endswith('.docx')]
         if not docx_files:
-            return jsonify({"status": "error", "message": f"No se encontraron documentos Word para el evento {id_evento_str}"}), 404
+            return jsonify({"status": "error", "message": "No hay Word en el directorio."}), 404
 
-        pdf_files = []
+        my_env = os.environ.copy()
+        my_env['HOME'] = '/tmp' # Previene crasheos de LibreOffice
+
+        # Procesamiento masivo por lotes (Chunks)
+        chunk_size = 30
+        for i in range(0, len(docx_files), chunk_size):
+            chunk = docx_files[i:i+chunk_size]
+            subprocess.run(
+                ['libreoffice', '--headless', '--nologo', '--nofirststartwizard', '--convert-to', 'pdf', '--outdir', evento_dir] + chunk, 
+                cwd=evento_dir, check=True, env=my_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+        pdf_files = [f for f in os.listdir(evento_dir) if f.endswith('.pdf')]
         
-        # 2. Convertir cada DOCX a PDF usando LibreOffice en el contenedor
-        for docx in docx_files:
-            docx_path = os.path.join(output_dir, docx)
-            # Llamada al sistema Linux para convertir el archivo
-            subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', output_dir, docx_path], check=True)
-            
-            pdf_filename = docx.replace('.docx', '.pdf')
-            pdf_files.append(pdf_filename)
-
-        # 3. Unir todos los PDFs en un PDF Maestro
+        # Unificación del PDF Maestro
         merger = PdfWriter()
-        for pdf in pdf_files:
-            merger.append(os.path.join(output_dir, pdf))
+        for pdf in sorted(pdf_files): 
+            merger.append(os.path.join(evento_dir, pdf))
 
         maestro_filename = f"{id_evento_str}_PDF_Maestro.pdf"
-        maestro_path = os.path.join(output_dir, maestro_filename)
-        merger.write(maestro_path)
+        maestro_path = os.path.join(evento_dir, maestro_filename)
+        if len(pdf_files) > 0:
+            merger.write(maestro_path)
         merger.close()
 
-        # 4. Crear el archivo ZIP en memoria RAM
+        # Empaquetado ZIP
         memory_file = io.BytesIO()
         with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # A) Agregar el PDF Maestro listo para imprimir
-            zf.write(maestro_path, maestro_filename)
-            # B) Agregar los archivos originales DOCX
+            if os.path.exists(maestro_path):
+                zf.write(maestro_path, maestro_filename)
             for docx in docx_files:
-                zf.write(os.path.join(output_dir, docx), docx)
-        
+                zf.write(os.path.join(evento_dir, docx), docx)
         memory_file.seek(0)
 
-        # 5. Limpieza del servidor: Borrar PDFs individuales y maestro (conservando los DOCX originales)
-        for pdf in pdf_files:
-            os.remove(os.path.join(output_dir, pdf))
-        os.remove(maestro_path)
+        # Limpieza para no saturar servidor
+        shutil.rmtree(evento_dir, ignore_errors=True)
 
-        # 6. Retornar el ZIP descargable
         return send_file(
-            memory_file,
-            mimetype='application/zip',
-            as_attachment=True,
-            download_name=f"Expediente_{id_evento_str}.zip"
+            memory_file, mimetype='application/zip', as_attachment=True, download_name=f"Expediente_{id_evento_str}.zip"
         )
-
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Error al empaquetar los documentos: {str(e)}"}), 500
+        if 'evento_dir' in locals() and os.path.exists(evento_dir):
+            shutil.rmtree(evento_dir, ignore_errors=True)
+        return jsonify({"status": "error", "message": f"Error en empaquetado: {str(e)}"}), 500
 
+
+# ==========================================
+# 5. MOTOR MAESTRO DE EXTRACCIÓN DE PDF (SCPM-01) CON NLP BÁSICO
+# ==========================================
 @app.route('/api/extract-pdf', methods=['POST'])
 def extract_pdf():
     if 'file' not in request.files:
-        return jsonify({"status": "error", "message": "No se encontro ningun archivo adjunto"}), 400
+        return jsonify({"status": "error", "message": "Sin archivo adjunto"}), 400
 
     file = request.files['file']
-
     if file.filename == '' or not file.filename.endswith('.pdf'):
-        return jsonify({"status": "error", "message": "Formato invalido. Por favor sube un archivo .pdf"}), 400
+        return jsonify({"status": "error", "message": "Solo archivos .pdf"}), 400
     
     try:
-        datos_eventos = {}
-        participantes = []
-
-        # LECTURA DE PDF
-        with pdfplumber.open(file) as pdf:
-            texto_completo =""
+        pdf_bytes = io.BytesIO(file.read())
+        
+        with pdfplumber.open(pdf_bytes) as pdf:
+            texto_completo = ""
             for page in pdf.pages:
-                texto_completo += page.extract_text() + "\n"
+                texto_completo += page.extract_text(x_tolerance=2, y_tolerance=2) + "\n"
             
-            # Extraccion de cabecera
-            id_sirhn = re.search (r"ID SIRHN GENERADO\s*(\d+)", texto_completo)
-            datos_eventos['ID_Evento (SIRHN)'] = id_sirhn.group(1) if id_sirhn else ""
+            def extraer(patron, texto, default=""):
+                match = re.search(patron, texto, re.IGNORECASE)
+                return match.group(1).strip() if match else default
 
-            nombre_evento = re.search(r"Nombre del\s*\n?(.+?)\s*\n?Tipo de Formación", texto_completo, re.IGNORECASE)
-            datos_evento['Nombre del Evento'] = nombre_evento.group(1).strip() if nombre_evento else ""
+            id_evento = extraer(r"ID SIRHN GENERADO\s*\n?(\d+)", texto_completo, "00000000")
+            nombre_evento = extraer(r"Nombre del\s*\n(.+?)\s*\nTipo de Formación", texto_completo, "SIN NOMBRE")
+            fecha_inicio_str = extraer(r"Fecha de inicio\s*\n?(\d{2}/\d{2}/\d{4})", texto_completo, "//")
+            fecha_termino_str = extraer(r"término\s*\n?(\d{2}/\d{2}/\d{4})", texto_completo, "//")
+            duracion = extraer(r"Duración\s*\n?\(horas\)\s*\n?(\d+)", texto_completo, "0")
             
-            fecha_inicio = re.search(r"Fecha de inicio\s*(\d{2}/\d{2}/\d{4})", texto_completo)
-            datos_evento['Fecha Inicio'] = fecha_inicio.group(1) if fecha_inicio else ""
-            
-            # Extraer Tabla de Participantes
+            instructor_nombre = extraer(r"Instructor/Proveedor.\s*\n(.+?)\s*\n", texto_completo, "")
+            instructor_ficha = extraer(r"Instructor/Proveedor.[\s\S]*?\n(\d{6})\n", texto_completo, "")
+            instructor_full = f"{instructor_nombre} {instructor_ficha}".strip()
+
+            try: dia_i, mes_i, anio_i = fecha_inicio_str.split('/')
+            except: dia_i, mes_i, anio_i = "", "", ""
+                
+            try: dia_t, mes_t, anio_t = fecha_termino_str.split('/')
+            except: dia_t, mes_t, anio_t = "", "", ""
+
+            # Algoritmo de Agrupación de Apellidos
+            def dividir_nombre_compuesto(full_name):
+                parts = str(full_name).strip().split()
+                if not parts: return "", "", ""
+                prefixes = {"DE", "LA", "LAS", "DEL", "LOS", "MAC", "SAN", "SANTA", "Y"}
+                grouped, current = [], ""
+                for p in parts:
+                    if p.upper() in prefixes:
+                        current += p + " "
+                    else:
+                        current += p
+                        grouped.append(current)
+                        current = ""
+                if len(grouped) == 1: return grouped[0], "", ""
+                elif len(grouped) == 2: return grouped[0], "", grouped[1] 
+                else: return grouped[0], grouped[1], " ".join(grouped[2:])
+
+            participantes = []
             for page in pdf.pages:
-                tablas = page.extract_tables()
-                for tabla in tablas:
+                for tabla in page.extract_tables():
                     if len(tabla) > 0 and tabla[0] and "Ficha" in str(tabla[0]):
                         for fila in tabla[1:]:
-                            if len(fila) >= 5 and fila[1]: 
+                            if len(fila) >= 5 and fila[1]:
                                 ficha = str(fila[1]).replace('\n', '').strip()
                                 if ficha.isdigit():
+                                    full_name = str(fila[2]).replace('\n', ' ').strip()
+                                    paterno, materno, nombres = dividir_nombre_compuesto(full_name)
+                                    nivel = str(fila[3]).replace('\n', '').strip()
+                                    categoria = str(fila[4]).replace('\n', ' ').strip()
+                                    
                                     participantes.append({
-                                        "No.": fila[0].replace('\n', '').strip() if fila[0] else "",
-                                        "Ficha": ficha,
-                                        "Nombre": fila[2].replace('\n', ' ').strip() if fila[2] else "",
-                                        "Nivel": fila[3].replace('\n', '').strip() if fila[3] else "",
-                                        "Categoría": fila[4].replace('\n', ' ').strip() if fila[4] else ""
+                                        "ID": id_evento,
+                                        "NOMBRE DEL EVENTO": nombre_evento,
+                                        "FICHA": ficha,
+                                        "PRIMER APELLIDO": paterno, "SEGUNDO APELLIDO": materno, "NOMBRE": nombres,
+                                        "NIVEL": nivel, "CATEGORIA": categoria,
+                                        "dia i": dia_i, "mes i": mes_i, "año i": anio_i,
+                                        "dia T": dia_t, "mes T": mes_t, "año T": anio_t,
+                                        "INSTRUCTOR": instructor_full, "DURACION HORAS": duracion
                                     })
         
-        # Crear el archivo Excel en la memoria RAM (sin guardarlo en el disco duro)
         memory_file = io.BytesIO()
-        df_evento = pd.DataFrame([datos_evento])
-        df_participantes = pd.DataFrame(participantes)
-        
         with pd.ExcelWriter(memory_file, engine='openpyxl') as writer:
-            df_evento.to_excel(writer, sheet_name='Datos Generales', index=False)
-            df_participantes.to_excel(writer, sheet_name='Participantes', index=False)
+            if participantes:
+                pd.DataFrame(participantes).to_excel(writer, sheet_name='Hoja1', index=False)
+            else:
+                pd.DataFrame([{"Error": "No se encontraron trabajadores en la tabla"}]).to_excel(writer, sheet_name='Errores')
             
         memory_file.seek(0)
-        
-        # Enviar el archivo Excel de regreso al cliente (React o Postman)
-        nombre_descarga = f"Extraccion_{datos_evento.get('ID_Evento (SIRHN)', 'SCPM01')}.xlsx"
-        
-        return send_file(
-            memory_file,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name=nombre_descarga
-        )
+        return send_file(memory_file, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f"Base_Datos_{id_evento}.xlsx")
 
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Error al procesar el PDF: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": f"Error del Motor: {str(e)}"}), 500
+
+
+# ==========================================
+# 6. DASHBOARD Y ESTADÍSTICAS
+# ==========================================
+@app.route('/api/stats', methods=['GET'])
+def get_stats():
+    conexion = get_db_connection()
+    if not conexion:
+        return jsonify({"status": "error", "message": "BD desconectada"}), 500
+
+    try:
+        with closing(conexion):
+            with conexion.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) as total_cursos FROM cursos")
+                total_cursos = cursor.fetchone()['total_cursos']
+
+                cursor.execute("SELECT COUNT(*) as total_trabajadores FROM historial_capacitacion")
+                total_trabajadores = cursor.fetchone()['total_trabajadores']
+
+                cursor.execute("""
+                    SELECT c.nombre_evento, COUNT(h.id) as total_capacitados 
+                    FROM cursos c 
+                    LEFT JOIN historial_capacitacion h ON c.id_evento = h.id_evento 
+                    GROUP BY c.id_evento, c.nombre_evento 
+                    ORDER BY total_capacitados DESC LIMIT 5
+                """)
+                top_cursos = cursor.fetchall()
+
+        return jsonify({
+            "status": "success",
+            "data": {
+                "total_cursos": total_cursos,
+                "total_trabajadores": total_trabajadores,
+                "top_cursos": top_cursos
+            }
+        }), 200
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Error BD: {str(e)}"}), 500
 
 
 if __name__ == '__main__':
