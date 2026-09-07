@@ -421,3 +421,182 @@ button:disabled {
   color: #94A3B8;
   font-style: italic;
 }
+
+/* =========================================
+   NUEVO: MENÚ DESPLEGABLE
+========================================= */
+.dropdown-container {
+  position: relative;
+}
+
+.btn-menu {
+  background-color: var(--pemex-green);
+  color: white;
+  border: none;
+  padding: 0.8rem 1.5rem;
+  font-size: 1rem;
+  font-weight: bold;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.btn-menu:hover {
+  background-color: #003d2b;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 110%;
+  right: 0;
+  background-color: white;
+  border: 1px solid #E2E8F0;
+  border-radius: var(--border-radius);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  overflow: hidden;
+  animation: fadeIn 0.2s ease;
+}
+
+.dropdown-menu button {
+  background: none;
+  border: none;
+  padding: 1rem 1.5rem;
+  text-align: left;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  cursor: pointer;
+  border-bottom: 1px solid #F1F5F9;
+  transition: background-color 0.2s;
+}
+
+.dropdown-menu button:last-child {
+  border-bottom: none;
+}
+
+.dropdown-menu button:hover {
+  background-color: #F8FAFC;
+  color: var(--pemex-green);
+}
+
+.dropdown-menu button.active {
+  background-color: #E0F2FE;
+  color: #0284C7;
+  font-weight: bold;
+  border-left: 4px solid #0284C7;
+}
+
+/* =========================================
+   NUEVO: LÍNEA DE TIEMPO (FASES DEL EVENTO)
+========================================= */
+.phase-tracker {
+  background-color: white;
+  padding: 2rem;
+  margin-bottom: 1rem;
+}
+
+.phase-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.phase-select {
+  padding: 0.5rem;
+  border: 1px solid #CBD5E1;
+  border-radius: 4px;
+  font-weight: bold;
+  color: var(--pemex-green);
+  background-color: #F8FAFC;
+}
+
+.stepper {
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  width: 100%;
+}
+
+.stepper::before {
+  content: '';
+  position: absolute;
+  top: 15px;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background-color: #E2E8F0;
+  z-index: 1;
+}
+
+.step {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 14%; /* 100% / 7 fases */
+  text-align: center;
+}
+
+.step-number {
+  width: 34px;
+  height: 34px;
+  background-color: white;
+  border: 3px solid #CBD5E1;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-weight: bold;
+  color: #94A3B8;
+  margin-bottom: 0.5rem;
+  transition: all 0.3s;
+}
+
+.step-label {
+  font-size: 0.75rem;
+  color: #64748B;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* Estados de las Fases */
+.step.completed .step-number {
+  background-color: var(--pemex-green);
+  border-color: var(--pemex-green);
+  color: white;
+}
+
+.step.current .step-number {
+  border-color: var(--pemex-gold);
+  background-color: var(--pemex-gold);
+  color: white;
+  box-shadow: 0 0 0 4px rgba(179, 142, 93, 0.2);
+}
+
+.step.completed .step-label, .step.current .step-label {
+  color: var(--text-main);
+}
+
+.fade-in {
+  animation: fadeIn 0.4s ease;
+}
+
+/* --- Buscador de Fases --- */
+.search-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.search-btn {
+  margin: 0 !important;
+  padding: 0.75rem 1.2rem;
+  width: auto !important;
+  background-color: var(--card-bg);
+}

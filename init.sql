@@ -5,6 +5,7 @@ USE pemex_db;
 CREATE TABLE IF NOT EXISTS cursos (
     id_evento VARCHAR(50) PRIMARY KEY,
     nombre_evento VARCHAR(255) NOT NULL,
+    fase_actual INT DEFAULT 1,
     fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
