@@ -18,3 +18,9 @@ CREATE TABLE IF NOT EXISTS historial_capacitacion (
     fecha_generacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (id_evento) REFERENCES cursos(id_evento) ON DELETE CASCADE
 );
+
+-- Tabla para el catálogo de CURPs (Sustituye al Excel en memoria)
+CREATE TABLE IF NOT EXISTS curps (
+    ficha VARCHAR(50) PRIMARY KEY,
+    curp VARCHAR(18) NOT NULL
+);

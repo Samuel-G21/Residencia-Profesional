@@ -1,5 +1,4 @@
 services:
-  # 1. Servicio de Base de Datos (MySQL)
   db:
     image: mysql:8.0
     container_name: pemex_mysql
@@ -10,12 +9,21 @@ services:
       MYSQL_USER: ${DB_USER:-pemex_user}
       MYSQL_PASSWORD: ${DB_PASSWORD:-pemex_password}
     ports:
-      - "3307:3306" # Usamos el puerto 3307 para evitar conflictos con tu MySQL local
+      - "3307:3306"
     volumes:
       - db_data:/var/lib/mysql
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql # Inyecta las tablas al iniciar
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
 
-  # 2. Servicio del Backend (Python/Flask + LibreOffice)
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: pemex_gotenberg
+    restart: always
+    command:
+      - "gotenberg"
+      - "--api-timeout=300s"
+    ports:
+      - "3001:3000"
+
   api:
     build: ./backend
     container_name: pemex_backend
@@ -30,20 +38,21 @@ services:
       - DB_USER=${DB_USER:-pemex_user}
       - DB_PASSWORD=${DB_PASSWORD:-pemex_password}
       - DB_NAME=${DB_NAME:-pemex_db}
+      - GOTENBERG_URL=http://gotenberg:3000
     depends_on:
-      - db # Espera a que la base de datos arranque primero
+      - db
+      - gotenberg
 
-  # 3. Servicio del Frontend (React + Nginx)
   interfaz:
     build: ./frontend
     container_name: pemex_frontend
     restart: always
     ports:
-      - "3000:80" # Nginx corre en el puerto 80 dentro del contenedor
+      - "3000:80"
     environment:
       - REACT_APP_API_URL=http://localhost:5000
     depends_on:
-      - api # Espera a que el backend esté listo
+      - api
 
 volumes:
   db_data:
