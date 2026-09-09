@@ -310,31 +310,38 @@ def generate_docs():
                 elif p.endswith('.xlsx'):
                     try:
                         import openpyxl
-                        wb = openpyxl.load_workbook(t_path)
+                        participantes = ctx_grp.get('lista_participantes', [])
                         
-                        if 'Propuesta' in wb.sheetnames:
-                            ws = wb['Propuesta']
+                        # Split participants into chunks of 5
+                        chunks = [participantes[i:i + 5] for i in range(0, max(1, len(participantes)), 5)]
+                        
+                        for chunk_idx, chunk in enumerate(chunks):
+                            wb = openpyxl.load_workbook(t_path)
                             
-                            if ws['D9'].value and 'nombre_evento' in str(ws['D9'].value):
-                                ws['D9'] = ctx_grp.get('nombre_evento', '')
-                            
-                            if ws['I54'].value and 'nombre_supervisor' in str(ws['I54'].value):
-                                inst_name = ctx_grp.get('nombre_instructor', '')
-                                inst_ficha = ctx_grp.get('ficha_instructor', '')
-                                ws['I54'] = f"{inst_name} F-{inst_ficha}"
+                            if 'Propuesta' in wb.sheetnames:
+                                ws = wb['Propuesta']
+                                
+                                if ws['D9'].value and 'nombre_evento' in str(ws['D9'].value):
+                                    ws['D9'] = ctx_grp.get('nombre_evento', '')
+                                
+                                if ws['I54'].value and 'nombre_supervisor' in str(ws['I54'].value):
+                                    inst_name = ctx_grp.get('nombre_instructor', '')
+                                    inst_ficha = ctx_grp.get('ficha_instructor', '')
+                                    ws['I54'] = f"{inst_name} F-{inst_ficha}"
 
-                            ws['I30'] = ''
-                            ws['I31'] = ''
-                            ws['M30'] = ''
+                                ws['I30'] = ''
+                                ws['I31'] = ''
+                                ws['M30'] = ''
+                                
+                                start_col = 9 
+                                for idx, part in enumerate(chunk):
+                                    ws.cell(row=30, column=start_col + idx).value = part.get('ficha', '')
+                                    ws.cell(row=31, column=start_col + idx).value = part.get('nombre_completo', '')
                             
-                            start_col = 9 
-                            for idx, part in enumerate(ctx_grp.get('lista_participantes', [])):
-                                ws.cell(row=30, column=start_col + idx).value = part.get('ficha', '')
-                                ws.cell(row=31, column=start_col + idx).value = part.get('nombre_completo', '')
-                        
-                        out_name = f"{id_evento}_EVENTO_{p.replace('.xlsx', '')}.xlsx"
-                        wb.save(os.path.join(evento_dir, out_name))
-                        docs_gen.append(out_name)
+                            suffix = f" ({chunk_idx + 1})" if chunk_idx > 0 else ""
+                            out_name = f"{id_evento}_EVENTO_{p.replace('.xlsx', '')}{suffix}.xlsx"
+                            wb.save(os.path.join(evento_dir, out_name))
+                            docs_gen.append(out_name)
                     except Exception as ex:
                         print(f"Error en grupal xlsx {p}: {ex}")
 
@@ -384,9 +391,12 @@ def download_docs(id_evento):
         if not os.path.exists(evento_dir):
             return jsonify({"status": "error", "message": "Sin documentos generados."}), 404
 
-        docx_files = [f for f in os.listdir(evento_dir) if f.endswith('.docx')]
-        if not docx_files:
-            return jsonify({"status": "error", "message": "No hay documentos Word."}), 404
+        all_files = os.listdir(evento_dir)
+        if not all_files:
+            return jsonify({"status": "error", "message": "No hay documentos."}), 404
+
+        docx_files = [f for f in all_files if f.endswith('.docx')]
+        xlsx_files = [f for f in all_files if f.endswith('.xlsx')]
 
         gotenberg_url = os.getenv('GOTENBERG_URL', 'http://gotenberg:3000')
 
@@ -395,7 +405,7 @@ def download_docs(id_evento):
             filepath = os.path.join(evento_dir, docx)
             with open(filepath, 'rb') as f:
                 try:
-                    res = requests.post(f"{gotenberg_url}/forms/libreoffice/convert", files={'files': (docx, f)}, timeout=10)
+                    res = requests.post(f"{gotenberg_url}/forms/libreoffice/convert", files={'files': (docx, f)}, timeout=300)
                     if res.status_code == 200:
                         pdf_path = os.path.join(evento_dir, docx.replace('.docx', '.pdf'))
                         with open(pdf_path, 'wb') as pdf_file:
@@ -421,6 +431,8 @@ def download_docs(id_evento):
                 zf.write(m_path, f"{id_ev}_PDF_Maestro.pdf")
             for docx in docx_files:
                 zf.write(os.path.join(evento_dir, docx), docx)
+            for xlsx in xlsx_files:
+                zf.write(os.path.join(evento_dir, xlsx), xlsx)
         mem_file.seek(0)
 
         # Se eliminó shutil.rmtree para permitir múltiples descargas
