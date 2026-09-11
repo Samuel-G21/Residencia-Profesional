@@ -8,6 +8,7 @@ import pymysql
 import re
 import pdfplumber
 from contextlib import closing
+from datetime import datetime
 
 from flask import send_file, Flask, request, jsonify
 from flask_cors import CORS
@@ -63,6 +64,27 @@ def get_db_connection():
     except Exception as e:
         print(f"Error conectando a BD: {e}")
         return None
+
+def migrate_db():
+    conexion = get_db_connection()
+    if conexion:
+        with closing(conexion):
+            with conexion.cursor() as cursor:
+                try:
+                    cursor.execute("ALTER TABLE cursos ADD COLUMN estado VARCHAR(20) DEFAULT 'ACTIVO'")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE historial_capacitacion ADD COLUMN estado VARCHAR(20) DEFAULT 'ACTIVO'")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE historial_capacitacion ADD COLUMN calificacion DECIMAL(5,2) DEFAULT NULL")
+                except Exception:
+                    pass
+            conexion.commit()
+
+migrate_db()
 
 
 @app.route('/', methods=['GET'])
@@ -127,18 +149,18 @@ def generate_docs():
 
         if trabajadores_curso.empty: return jsonify({"status": "error", "message": "Sin trabajadores"}), 404
 
-        # Cargar Catálogo de CURPs desde la Base de Datos
+        # Cargar Catálogo de CURPs desde Excel (CURP.xlsx)
         diccionario_curps = {}
-        fichas_buscar = list(trabajadores_curso['FICHA'].dropna().unique())
-        if fichas_buscar:
-            conexion_curp = get_db_connection()
-            if conexion_curp:
-                with closing(conexion_curp):
-                    with conexion_curp.cursor() as cursor:
-                        format_strings = ','.join(['%s'] * len(fichas_buscar))
-                        cursor.execute(f"SELECT ficha, curp FROM curps WHERE ficha IN ({format_strings})", tuple(fichas_buscar))
-                        for row in cursor.fetchall():
-                            diccionario_curps[row['ficha']] = row['curp'].upper()
+        ruta_curp = os.path.join('catalogos', 'CURP.xlsx')
+        if os.path.exists(ruta_curp):
+            try:
+                df_curp = pd.read_excel(ruta_curp)
+                df_curp.columns = df_curp.columns.str.upper().str.strip()
+                if 'FICHA' in df_curp.columns and 'CURP' in df_curp.columns:
+                    for _, r_curp in df_curp.iterrows():
+                        diccionario_curps[safe_str(r_curp['FICHA'])] = str(r_curp['CURP']).upper()
+            except Exception as e:
+                print("Error leyendo CURP.xlsx:", e)
 
         # Datos Generales del Evento
         row0 = trabajadores_curso.iloc[0]
@@ -189,9 +211,19 @@ def generate_docs():
             '5. Carta Compromiso Instructor 2026 COMBINADA.docx',
             'FVC.docx',
             'Informe Técnico Instructor 2025.docx',
-            'SCPM-05 2025.docx',
-            'SCPM-07.xlsx'
+            'SCPM-05 2025.docx'
         ]
+
+        if f_termino:
+            try:
+                fecha_fin = datetime.strptime(f_termino, '%d/%m/%Y')
+                dias_pasados = (datetime.now() - fecha_fin).days
+                if dias_pasados <= 45:
+                    todas_grp.append('SCPM-07.xlsx')
+            except ValueError:
+                todas_grp.append('SCPM-07.xlsx')
+        else:
+            todas_grp.append('SCPM-07.xlsx')
 
         if docs_seleccionados_str:
             lista_seleccionados = [d.strip() for d in docs_seleccionados_str.split(',')]
@@ -243,6 +275,7 @@ def generate_docs():
                 "nombre_completo": nombre_completo,
                 "nombre_trabajador": nombre_completo,
                 "curp": curp,
+                "CURP": curp,
                 "nombre_evento": nombre_curso,
                 "nombre_curso": nombre_curso,
                 "clave_evento": id_evento,
@@ -592,6 +625,33 @@ def get_stats():
                 )
                 recientes = c.fetchall()
                 
+                c.execute("SELECT COUNT(*) as total FROM cursos WHERE estado = 'CANCELADO'")
+                cancelados = c.fetchone()['total']
+
+                c.execute("SELECT COUNT(*) as total FROM historial_capacitacion WHERE estado = 'BAJA'")
+                bajas = c.fetchone()['total']
+
+                c.execute("SELECT AVG(calificacion) as promedio FROM historial_capacitacion WHERE calificacion IS NOT NULL")
+                promedio = c.fetchone()['promedio']
+                promedio = float(promedio) if promedio else 0
+
+                c.execute("SELECT COUNT(*) as total FROM historial_capacitacion WHERE calificacion < 80")
+                reprobados = c.fetchone()['total']
+
+                c.execute("SELECT c.nombre_evento, AVG(h.calificacion) as promedio_curso FROM cursos c JOIN historial_capacitacion h ON c.id_evento = h.id_evento WHERE h.calificacion IS NOT NULL GROUP BY c.id_evento, c.nombre_evento")
+                promedios_cursos = c.fetchall()
+
+                # Plan de accion (Indice de reprobacion)
+                reprobados_porcentaje = (reprobados / tot_t) * 100 if tot_t > 0 else 0
+                if reprobados_porcentaje > 20:
+                    plan_accion = f"ALERTA: Alto índice de reprobación ({reprobados_porcentaje:.1f}%). Se sugiere revisar la metodología del instructor, rediseñar materiales didácticos o implementar sesiones de reforzamiento."
+                elif reprobados_porcentaje > 10:
+                    plan_accion = f"PRECAUCIÓN: Índice de reprobación moderado ({reprobados_porcentaje:.1f}%). Se sugiere aplicar encuestas de satisfacción para identificar áreas de mejora."
+                elif reprobados > 0:
+                    plan_accion = f"NORMAL: Índice de reprobación bajo ({reprobados_porcentaje:.1f}%). Continuar con el monitoreo regular de las evaluaciones."
+                else:
+                    plan_accion = "EXCELENTE: Ningún trabajador reprobado. Mantener las estrategias de capacitación actuales."
+                
         return jsonify({
             "status": "success", 
             "data": {
@@ -600,7 +660,13 @@ def get_stats():
                 "trabajadores_unicos": tot_unicos,
                 "top_cursos": top,
                 "cursos_por_fase": fases_data,
-                "cursos_recientes": recientes
+                "cursos_recientes": recientes,
+                "cursos_cancelados": cancelados,
+                "trabajadores_baja": bajas,
+                "promedio_general": promedio,
+                "reprobados": reprobados,
+                "promedios_cursos": promedios_cursos,
+                "plan_accion": plan_accion
             }
         }), 200
     except Exception as e:
@@ -648,11 +714,11 @@ def get_all_cursos():
         with closing(conexion):
             with conexion.cursor() as c:
                 c.execute("""
-                    SELECT c.id_evento, c.nombre_evento, c.fase_actual, c.fecha_registro,
+                    SELECT c.id_evento, c.nombre_evento, c.fase_actual, c.fecha_registro, c.estado,
                            COUNT(h.id) as total_participantes
                     FROM cursos c
                     LEFT JOIN historial_capacitacion h ON c.id_evento = h.id_evento
-                    GROUP BY c.id_evento, c.nombre_evento, c.fase_actual, c.fecha_registro
+                    GROUP BY c.id_evento, c.nombre_evento, c.fase_actual, c.fecha_registro, c.estado
                     ORDER BY c.fecha_registro DESC
                 """)
                 cursos = c.fetchall()
@@ -673,7 +739,7 @@ def get_evento_fase(id_evento):
     try:
         with closing(conexion):
             with conexion.cursor() as cursor:
-                cursor.execute("SELECT id_evento, nombre_evento, fase_actual FROM cursos WHERE id_evento = %s",
+                cursor.execute("SELECT id_evento, nombre_evento, fase_actual, estado FROM cursos WHERE id_evento = %s",
                                (id_evento,))
                 evento = cursor.fetchone()
 
@@ -682,6 +748,22 @@ def get_evento_fase(id_evento):
         else:
             return jsonify({"status": "not_found", "message": "Evento nuevo", "fase_sugerida": 1}), 200
 
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/evento/<id_evento>/trabajadores', methods=['GET'])
+def get_evento_trabajadores(id_evento):
+    conexion = get_db_connection()
+    if not conexion:
+        return jsonify({"status": "error", "message": "BD desconectada"}), 500
+
+    try:
+        with closing(conexion):
+            with conexion.cursor() as cursor:
+                cursor.execute("SELECT id, ficha_trabajador, nombre_trabajador, estado, calificacion FROM historial_capacitacion WHERE id_evento = %s",
+                               (id_evento,))
+                trabajadores = cursor.fetchall()
+        return jsonify({"status": "success", "data": trabajadores}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -734,6 +816,78 @@ def delete_evento(id_evento):
             return jsonify({"status": "success", "message": "Evento eliminado"}), 200
         else:
             return jsonify({"status": "error", "message": "Evento no encontrado"}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/evento/<id_evento>/cancelar', methods=['PUT'])
+def cancelar_evento(id_evento):
+    conexion = get_db_connection()
+    if not conexion:
+        return jsonify({"status": "error", "message": "BD desconectada"}), 500
+    try:
+        with closing(conexion):
+            with conexion.cursor() as cursor:
+                cursor.execute("UPDATE cursos SET estado = 'CANCELADO' WHERE id_evento = %s", (id_evento,))
+                if cursor.rowcount == 0:
+                    return jsonify({"status": "error", "message": "Evento no encontrado"}), 404
+            conexion.commit()
+        return jsonify({"status": "success", "message": "Evento cancelado"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/evento/<id_evento>/trabajador/<ficha>/baja', methods=['PUT'])
+def baja_trabajador(id_evento, ficha):
+    conexion = get_db_connection()
+    if not conexion:
+        return jsonify({"status": "error", "message": "BD desconectada"}), 500
+    try:
+        with closing(conexion):
+            with conexion.cursor() as cursor:
+                cursor.execute("UPDATE historial_capacitacion SET estado = 'BAJA' WHERE id_evento = %s AND ficha_trabajador = %s", (id_evento, ficha))
+                if cursor.rowcount == 0:
+                    return jsonify({"status": "error", "message": "Trabajador no encontrado en el evento"}), 404
+            conexion.commit()
+        return jsonify({"status": "success", "message": "Trabajador dado de baja"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/evento/<id_evento>/scpm07', methods=['POST'])
+def upload_scpm07(id_evento):
+    if 'file' not in request.files:
+        return jsonify({"status": "error", "message": "Falta el archivo SCPM-07"}), 400
+    file = request.files['file']
+    if not file.filename.endswith('.xlsx'):
+        return jsonify({"status": "error", "message": "Debe ser un archivo Excel (.xlsx)"}), 400
+    try:
+        df = pd.read_excel(file)
+        df.columns = df.columns.str.upper().str.strip()
+        
+        col_ficha = None
+        col_calif = None
+        for col in df.columns:
+            if 'FICHA' in col: col_ficha = col
+            if 'CALIFICACI' in col: col_calif = col
+            
+        # Optional: maybe fallback to positional if we know SCPM-07 format precisely, but string matching is safer.
+        if not col_ficha or not col_calif:
+            return jsonify({"status": "error", "message": "No se encontraron columnas de FICHA o CALIFICACION"}), 400
+        
+        conexion = get_db_connection()
+        if not conexion: return jsonify({"status": "error", "message": "BD desconectada"}), 500
+        
+        with closing(conexion):
+            with conexion.cursor() as cursor:
+                for _, row in df.iterrows():
+                    ficha = safe_str(row.get(col_ficha, ''))
+                    calif_raw = row.get(col_calif, '')
+                    if not ficha or pd.isna(calif_raw) or str(calif_raw).strip() == '': continue
+                    try:
+                        calif = float(calif_raw)
+                        cursor.execute("UPDATE historial_capacitacion SET calificacion = %s WHERE id_evento = %s AND ficha_trabajador = %s", (calif, id_evento, ficha))
+                    except ValueError:
+                        continue
+            conexion.commit()
+        return jsonify({"status": "success", "message": "Calificaciones actualizadas"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

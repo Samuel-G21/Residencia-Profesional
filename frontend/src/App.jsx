@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import html2canvas from 'html2canvas';
 import './App.css';
 
 function App() {
@@ -101,6 +103,77 @@ function App() {
       }
     } catch (error) {
       console.error('Error al cargar historial:', error);
+    }
+  };
+
+  // --- Estados de Detalles de Evento ---
+  const [selectedEventId, setSelectedEventId] = useState(null);
+  const [eventWorkers, setEventWorkers] = useState([]);
+  const [scpmFile, setScpmFile] = useState(null);
+
+  const handleVerDetalles = async (id_evento) => {
+    setSelectedEventId(id_evento);
+    fetchTrabajadoresEvento(id_evento);
+    changeView('detalle_evento');
+  };
+
+  const fetchTrabajadoresEvento = async (id_evento) => {
+    try {
+      const res = await axios.get(`http://localhost:5000/api/evento/${id_evento}/trabajadores`);
+      if (res.data.status === 'success') {
+        setEventWorkers(res.data.data);
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const handleCancelarEvento = async () => {
+    if(!window.confirm('¿Seguro que deseas cancelar este evento?')) return;
+    try {
+      const res = await axios.put(`http://localhost:5000/api/evento/${selectedEventId}/cancelar`);
+      if(res.data.status === 'success') {
+        alert('Evento cancelado');
+        fetchHistorial();
+        changeView('historial');
+      }
+    } catch(err) {
+      alert('Error cancelando evento');
+    }
+  };
+
+  const handleBajaTrabajador = async (ficha) => {
+    if(!window.confirm(`¿Dar de baja al trabajador con ficha ${ficha}?`)) return;
+    try {
+      const res = await axios.put(`http://localhost:5000/api/evento/${selectedEventId}/trabajador/${ficha}/baja`);
+      if(res.data.status === 'success') {
+        alert('Trabajador dado de baja');
+        fetchTrabajadoresEvento(selectedEventId);
+      }
+    } catch(err) {
+      alert('Error dando de baja al trabajador');
+    }
+  };
+
+  const handleSubirSCPM07 = async (e) => {
+    e.preventDefault();
+    if(!scpmFile) return;
+    const formData = new FormData();
+    formData.append('file', scpmFile);
+    setLoadingMessage('Subiendo calificaciones...');
+    try {
+      const res = await axios.post(`http://localhost:5000/api/evento/${selectedEventId}/scpm07`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if(res.data.status === 'success') {
+        alert('Calificaciones actualizadas');
+        fetchTrabajadoresEvento(selectedEventId);
+      }
+    } catch(err) {
+      alert('Error subiendo calificaciones');
+    } finally {
+      setLoadingMessage('');
+      setScpmFile(null);
     }
   };
 
@@ -300,6 +373,50 @@ function App() {
     }
   };
 
+  const handleExportDashboard = () => {
+    const csvContent = [
+      ['KPI', 'Valor'],
+      ['Eventos Registrados', stats.total_cursos],
+      ['Total Capacitaciones', stats.total_trabajadores],
+      ['Trabajadores de Baja', stats.trabajadores_baja],
+      ['Eventos Cancelados', stats.cursos_cancelados],
+      ['Promedio General', stats.promedio_general],
+      ['Trabajadores Reprobados', stats.reprobados],
+      [],
+      ['Top 5 Eventos', 'Participantes'],
+      ...(stats.top_cursos || []).map(c => [c.nombre_evento, c.total_capacitados]),
+      [],
+      ['Fase', 'Eventos'],
+      ...(stats.cursos_por_fase || []).map(f => [`Fase ${f.fase_actual}`, f.cantidad])
+    ].map(e => e.join(",")).join("\n");
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute('download', 'dashboard_stats.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportDashboardImage = async () => {
+    const dashboardEl = document.getElementById('dashboard-charts');
+    if (!dashboardEl) return;
+    setLoadingMessage('Generando imagen del dashboard...');
+    try {
+      const canvas = await html2canvas(dashboardEl, { scale: 2 });
+      const image = canvas.toDataURL("image/png", 1.0);
+      const link = document.createElement('a');
+      link.href = image;
+      link.download = 'dashboard_graficas.png';
+      link.click();
+    } catch(err) {
+      alert("Error al exportar gráficas");
+    } finally {
+      setLoadingMessage('');
+    }
+  };
+
   const changeView = (view) => {
     setActiveView(view);
     setIsMenuOpen(false);
@@ -369,7 +486,10 @@ function App() {
                   {historialCursos.length > 0 ? (
                     historialCursos.map((curso, idx) => (
                       <tr key={curso.id_evento} style={{ backgroundColor: idx % 2 === 0 ? '#f8f9fa' : 'white', borderBottom: '1px solid #eee' }}>
-                        <td style={{ padding: '12px', fontWeight: 'bold', color: '#1a3b2b' }}>{curso.id_evento}</td>
+                        <td style={{ padding: '12px', fontWeight: 'bold', color: '#1a3b2b' }}>
+                          {curso.id_evento}
+                          {curso.estado === 'CANCELADO' && <span style={{marginLeft: '8px', color: 'red', fontSize: '0.8rem'}}>(CANCELADO)</span>}
+                        </td>
                         <td style={{ padding: '12px' }}>{curso.nombre_evento}</td>
                         <td style={{ padding: '12px', textAlign: 'center' }}>
                           <span style={{ backgroundColor: '#b38e5d', color: 'white', padding: '4px 10px', borderRadius: '12px', fontSize: '0.9rem', fontWeight: 'bold' }}>
@@ -378,6 +498,7 @@ function App() {
                         </td>
                         <td style={{ padding: '12px' }}>{fases[curso.fase_actual - 1] || `Fase ${curso.fase_actual}`}</td>
                         <td style={{ padding: '12px', display: 'flex', gap: '8px' }}>
+                          <button onClick={() => handleVerDetalles(curso.id_evento)} style={{ padding: '6px 12px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }} title="Detalles">⚙️ Detalles</button>
                           <button 
                             onClick={() => downloadZip(curso.id_evento)} 
                             style={{ padding: '6px 12px', backgroundColor: '#1a3b2b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}
@@ -400,6 +521,57 @@ function App() {
                       <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>No hay eventos registrados en el historial.</td>
                     </tr>
                   )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {/* VISTA: DETALLES DE EVENTO (NUEVA) */}
+        {activeView === 'detalle_evento' && (
+          <section className="card full-width-card fade-in">
+            <div className="dashboard-header">
+              <h2>Detalles del Evento: {selectedEventId}</h2>
+              <button onClick={() => changeView('historial')} className="btn-refresh">⬅️ Volver</button>
+            </div>
+            
+            <div style={{display: 'flex', gap: '1rem', marginTop: '1rem', flexWrap: 'wrap'}}>
+              <button onClick={handleCancelarEvento} style={{backgroundColor: '#dc3545', color: '#fff', padding: '10px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>
+                ❌ Cancelar Evento
+              </button>
+              <form onSubmit={handleSubirSCPM07} style={{display: 'flex', gap: '10px', alignItems: 'center', backgroundColor: '#f8f9fa', padding: '10px', borderRadius: '4px', border: '1px solid #ddd'}}>
+                <label style={{fontWeight: 'bold'}}>Subir SCPM-07 (Calificaciones):</label>
+                <input type="file" accept=".xlsx" onChange={e => setScpmFile(e.target.files[0])} />
+                <button type="submit" disabled={!scpmFile} style={{backgroundColor: '#28a745', color: '#fff', padding: '8px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Subir</button>
+              </form>
+            </div>
+
+            <div style={{ overflowX: 'auto', marginTop: '1.5rem' }}>
+              <h3>Trabajadores Registrados</h3>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#1a3b2b', color: 'white' }}>
+                    <th style={{ padding: '12px' }}>Ficha</th>
+                    <th style={{ padding: '12px' }}>Nombre</th>
+                    <th style={{ padding: '12px' }}>Estado</th>
+                    <th style={{ padding: '12px' }}>Calificación</th>
+                    <th style={{ padding: '12px' }}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {eventWorkers.map(w => (
+                    <tr key={w.ficha_trabajador} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: '12px' }}>{w.ficha_trabajador}</td>
+                      <td style={{ padding: '12px' }}>{w.nombre_trabajador}</td>
+                      <td style={{ padding: '12px', color: w.estado === 'BAJA' ? 'red' : 'green' }}>{w.estado}</td>
+                      <td style={{ padding: '12px' }}>{w.calificacion ?? '-'}</td>
+                      <td style={{ padding: '12px' }}>
+                        {w.estado !== 'BAJA' && (
+                          <button onClick={() => handleBajaTrabajador(w.ficha_trabajador)} style={{backgroundColor: '#ffc107', color: '#000', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Dar de Baja</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -537,85 +709,151 @@ function App() {
           <section className="card full-width-card fade-in">
             <div className="dashboard-header">
               <h2>Dashboard Estadístico de Capacitación</h2>
-              <button onClick={fetchStats} className="btn-refresh"> Actualizar</button>
+              <div>
+                <button onClick={handleExportDashboardImage} className="btn-secondary" style={{ marginRight: '10px' }}>🖼️ Exportar Gráficas (Imagen)</button>
+                <button onClick={handleExportDashboard} className="btn-secondary" style={{ marginRight: '10px' }}>📥 Exportar CSV</button>
+                <button onClick={fetchStats} className="btn-refresh">🔄 Actualizar</button>
+              </div>
             </div>
             
-            <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
-              <div className="kpi-card" style={{ padding: '1.5rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #1a3b2b' }}>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#555' }}>Eventos Registrados</h3>
-                <p className="kpi-number" style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#1a3b2b', margin: '10px 0 0 0' }}>{stats.total_cursos}</p>
+            <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+              <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #1a3b2b' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Eventos</h3>
+                <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1a3b2b', margin: '5px 0 0 0' }}>{stats.total_cursos}</p>
               </div>
-              <div className="kpi-card" style={{ padding: '1.5rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #b38e5d' }}>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#555' }}>Total de Capacitaciones</h3>
-                <p className="kpi-number" style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#b38e5d', margin: '10px 0 0 0' }}>{stats.total_trabajadores}</p>
+              <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #b38e5d' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Capacitaciones</h3>
+                <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#b38e5d', margin: '5px 0 0 0' }}>{stats.total_trabajadores}</p>
               </div>
-              <div className="kpi-card" style={{ padding: '1.5rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #28a745' }}>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#555' }}>Trabajadores Únicos</h3>
-                <p className="kpi-number" style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#28a745', margin: '10px 0 0 0' }}>{stats.trabajadores_unicos}</p>
+              <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #dc3545' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Trab. de Baja</h3>
+                <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#dc3545', margin: '5px 0 0 0' }}>{stats.trabajadores_baja ?? 0}</p>
+              </div>
+              <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #ffc107' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Cancelados</h3>
+                <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#ffc107', margin: '5px 0 0 0' }}>{stats.cursos_cancelados ?? 0}</p>
+              </div>
+              <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #17a2b8' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Promedio Gral</h3>
+                <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#17a2b8', margin: '5px 0 0 0' }}>{(stats.promedio_general ?? 0).toFixed(1)}</p>
+              </div>
+              <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #6f42c1' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Reprobados</h3>
+                <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#6f42c1', margin: '5px 0 0 0' }}>{stats.reprobados ?? 0}</p>
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem' }}>
-              
-              {/* Eventos Recientes */}
-              <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem' }}>
-                <h3 style={{ borderBottom: '2px solid #1a3b2b', paddingBottom: '0.5rem', marginTop: 0 }}>Últimos Eventos Registrados</h3>
-                {stats.cursos_recientes && stats.cursos_recientes.length > 0 ? (
-                  <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                    {stats.cursos_recientes.map((curso, idx) => (
-                      <li key={idx} style={{ padding: '10px 0', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between' }}>
-                        <div>
-                          <strong>{curso.nombre_evento}</strong>
-                          <div style={{ fontSize: '0.85rem', color: '#666' }}>ID: {curso.id_evento} | Fase: {fases[curso.fase_actual - 1] || curso.fase_actual}</div>
-                        </div>
-                        <span style={{ fontSize: '0.85rem', color: '#999' }}>{new Date(curso.fecha_registro).toLocaleDateString()}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p style={{ color: '#666', fontStyle: 'italic' }}>No hay eventos registrados aún.</p>
-                )}
+            {stats.plan_accion && (
+              <div style={{ backgroundColor: stats.plan_accion.startsWith('ALERTA') ? '#f8d7da' : stats.plan_accion.startsWith('PRECAUCIÓN') ? '#fff3cd' : '#d4edda', padding: '1rem', borderRadius: '8px', marginBottom: '2rem', border: '1px solid #ccc' }}>
+                <h3 style={{ marginTop: 0, color: '#333' }}>📋 Plan de Acción Recomendado (Índice de Reprobación)</h3>
+                <p style={{ margin: 0, color: '#444', fontWeight: 'bold' }}>{stats.plan_accion}</p>
               </div>
+            )}
 
-              {/* Top 5 Cursos */}
-              <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem' }}>
-                <h3 style={{ borderBottom: '2px solid #b38e5d', paddingBottom: '0.5rem', marginTop: 0 }}>Top 5 Eventos</h3>
+            <div id="dashboard-charts" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem', backgroundColor: '#fff', padding: '1rem' }}>
+              
+              {/* Gráfica 1: Top 5 Eventos (BarChart) */}
+              <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
+                <h3 style={{ borderBottom: '2px solid #b38e5d', paddingBottom: '0.5rem', marginTop: 0 }}>Top 5 Eventos (Participantes)</h3>
                 {stats.top_cursos && stats.top_cursos.length > 0 ? (
-                  <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                    {stats.top_cursos.map((curso, idx) => (
-                      <li key={idx} style={{ padding: '10px 0', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ maxWidth: '75%' }}>{idx + 1}. {curso.nombre_evento}</span>
-                        <span style={{ backgroundColor: '#1a3b2b', color: 'white', padding: '4px 10px', borderRadius: '12px', fontSize: '0.9rem', fontWeight: 'bold' }}>{curso.total_capacitados}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={stats.top_cursos} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="nombre_evento" tick={{fontSize: 10}} tickFormatter={(val) => val.substring(0, 10) + '...'} />
+                      <YAxis />
+                      <RechartsTooltip />
+                      <Bar dataKey="total_capacitados" fill="#1a3b2b" name="Participantes" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 ) : (
                   <p style={{ color: '#666', fontStyle: 'italic' }}>No hay participantes registrados aún.</p>
                 )}
               </div>
 
-              {/* Eventos por Fase */}
-              <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem' }}>
+              {/* Gráfica 2: Distribución por Fase (PieChart) */}
+              <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
                 <h3 style={{ borderBottom: '2px solid #6c757d', paddingBottom: '0.5rem', marginTop: 0 }}>Distribución por Fase</h3>
                 {stats.cursos_por_fase && stats.cursos_por_fase.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '1rem' }}>
-                    {stats.cursos_por_fase.map((faseItem, idx) => (
-                      <div key={idx}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', marginBottom: '4px' }}>
-                          <span>Fase {faseItem.fase_actual}: {fases[faseItem.fase_actual - 1] || 'Desconocida'}</span>
-                          <strong>{faseItem.cantidad} eventos</strong>
-                        </div>
-                        <div style={{ width: '100%', backgroundColor: '#e9ecef', borderRadius: '4px', height: '10px' }}>
-                          <div style={{ width: `${Math.min(100, (faseItem.cantidad / Math.max(1, stats.total_cursos)) * 100)}%`, backgroundColor: '#1a3b2b', height: '100%', borderRadius: '4px' }}></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie data={stats.cursos_por_fase} dataKey="cantidad" nameKey="fase_actual" cx="50%" cy="50%" outerRadius={80} label={(entry) => `Fase ${entry.fase_actual}`}>
+                        {stats.cursos_por_fase.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={['#1a3b2b', '#b38e5d', '#dc3545', '#ffc107', '#17a2b8'][index % 5]} />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip formatter={(value, name) => [value, `Fase ${name}`]} />
+                    </PieChart>
+                  </ResponsiveContainer>
                 ) : (
                   <p style={{ color: '#666', fontStyle: 'italic' }}>No hay datos de fases disponibles.</p>
                 )}
               </div>
 
+              {/* Gráfica 2.1: Estado de Cursos (PieChart) */}
+              <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
+                <h3 style={{ borderBottom: '2px solid #ffc107', paddingBottom: '0.5rem', marginTop: 0 }}>Estado de Cursos</h3>
+                {stats.total_cursos > 0 ? (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie 
+                        data={[
+                          { name: 'Activos', value: stats.total_cursos - (stats.cursos_cancelados || 0) },
+                          { name: 'Cancelados', value: stats.cursos_cancelados || 0 }
+                        ]} 
+                        dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={(entry) => entry.name}
+                      >
+                        <Cell fill="#1a3b2b" />
+                        <Cell fill="#dc3545" />
+                      </Pie>
+                      <RechartsTooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p style={{ color: '#666', fontStyle: 'italic' }}>No hay cursos registrados aún.</p>
+                )}
+              </div>
+
+              {/* Gráfica 2.2: Estado de Trabajadores (PieChart) */}
+              <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
+                <h3 style={{ borderBottom: '2px solid #dc3545', paddingBottom: '0.5rem', marginTop: 0 }}>Estado de Trabajadores</h3>
+                {stats.total_trabajadores > 0 ? (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie 
+                        data={[
+                          { name: 'Activos', value: stats.total_trabajadores - (stats.trabajadores_baja || 0) },
+                          { name: 'Bajas', value: stats.trabajadores_baja || 0 }
+                        ]} 
+                        dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={(entry) => entry.name}
+                      >
+                        <Cell fill="#1a3b2b" />
+                        <Cell fill="#dc3545" />
+                      </Pie>
+                      <RechartsTooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p style={{ color: '#666', fontStyle: 'italic' }}>No hay trabajadores registrados aún.</p>
+                )}
+              </div>
+
+              {/* Gráfica 3: Promedio de Calificación por Curso (BarChart) */}
+              <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem', display: 'flex', flexDirection: 'column', gridColumn: '1 / -1' }}>
+                <h3 style={{ borderBottom: '2px solid #17a2b8', paddingBottom: '0.5rem', marginTop: 0 }}>Promedio de Calificación por Curso</h3>
+                {stats.promedios_cursos && stats.promedios_cursos.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={stats.promedios_cursos} margin={{ top: 10, right: 10, left: -20, bottom: 40 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="nombre_evento" tick={{fontSize: 10}} angle={-45} textAnchor="end" />
+                      <YAxis domain={[0, 100]} />
+                      <RechartsTooltip />
+                      <Bar dataKey="promedio_curso" fill="#17a2b8" name="Promedio" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p style={{ color: '#666', fontStyle: 'italic' }}>No hay calificaciones registradas aún.</p>
+                )}
+              </div>
             </div>
           </section>
         )}
