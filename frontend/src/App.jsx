@@ -3,6 +3,7 @@ import axios from 'axios';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import html2canvas from 'html2canvas';
 import './App.css';
+import Swal from 'sweetalert2';
 
 function App() {
   // --- Estados de Navegación ---
@@ -128,30 +129,76 @@ function App() {
     }
   };
 
-  const handleCancelarEvento = async () => {
-    if(!window.confirm('¿Seguro que deseas cancelar este evento?')) return;
+  const handleFinalizarEvento = async () => {
+    const result = await Swal.fire({
+      title: '¿Finalizar Evento?',
+      text: '¿Seguro que deseas finalizar este evento?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Sí, finalizar',
+      cancelButtonText: 'Cancelar'
+    });
+    if(!result.isConfirmed) return;
+    
     try {
-      const res = await axios.put(`http://localhost:5000/api/evento/${selectedEventId}/cancelar`);
+      const res = await axios.put(`http://localhost:5000/api/evento/${selectedEventId}/finalizar`);
       if(res.data.status === 'success') {
-        alert('Evento cancelado');
+        Swal.fire('¡Éxito!', 'Evento finalizado', 'success');
         fetchHistorial();
         changeView('historial');
       }
     } catch(err) {
-      alert('Error cancelando evento');
+      Swal.fire('Error', 'Error finalizando evento', 'error');
+    }
+  };
+
+  const handleCancelarEvento = async () => {
+    const result = await Swal.fire({
+      title: '¿Cancelar Evento?',
+      text: '¿Seguro que deseas cancelar este evento?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      confirmButtonText: 'Sí, cancelar',
+      cancelButtonText: 'No'
+    });
+    if(!result.isConfirmed) return;
+    
+    try {
+      const res = await axios.put(`http://localhost:5000/api/evento/${selectedEventId}/cancelar`);
+      if(res.data.status === 'success') {
+        Swal.fire('Cancelado', 'Evento cancelado', 'success');
+        fetchHistorial();
+        changeView('historial');
+      }
+    } catch(err) {
+      Swal.fire('Error', 'Error cancelando evento', 'error');
     }
   };
 
   const handleBajaTrabajador = async (ficha) => {
-    if(!window.confirm(`¿Dar de baja al trabajador con ficha ${ficha}?`)) return;
+    const { value: motivo } = await Swal.fire({
+      title: 'Dar de Baja',
+      text: `¿Motivo de baja para el trabajador con ficha ${ficha}?`,
+      input: 'text',
+      showCancelButton: true,
+      inputValidator: (value) => {
+        if (!value) {
+          return '¡Necesitas escribir un motivo!';
+        }
+      }
+    });
+
+    if (!motivo) return;
+
     try {
-      const res = await axios.put(`http://localhost:5000/api/evento/${selectedEventId}/trabajador/${ficha}/baja`);
+      const res = await axios.put(`http://localhost:5000/api/evento/${selectedEventId}/trabajador/${ficha}/baja`, { motivo });
       if(res.data.status === 'success') {
-        alert('Trabajador dado de baja');
+        Swal.fire('¡Baja exitosa!', 'Trabajador dado de baja', 'success');
         fetchTrabajadoresEvento(selectedEventId);
       }
     } catch(err) {
-      alert('Error dando de baja al trabajador');
+      Swal.fire('Error', 'Error dando de baja al trabajador', 'error');
     }
   };
 
@@ -166,11 +213,11 @@ function App() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       if(res.data.status === 'success') {
-        alert('Calificaciones actualizadas');
+        Swal.fire('¡Actualizado!', 'Calificaciones actualizadas', 'success');
         fetchTrabajadoresEvento(selectedEventId);
       }
     } catch(err) {
-      alert('Error subiendo calificaciones');
+      Swal.fire('Error', 'Error: ' + (err.response?.data?.message || err.message), 'error');
     } finally {
       setLoadingMessage('');
       setScpmFile(null);
@@ -178,18 +225,26 @@ function App() {
   };
 
   const handleDeleteEvent = async (id_evento) => {
-    if (!window.confirm(`¿Estás seguro de eliminar el evento ${id_evento}? Esto borrará su historial y documentos generados.`)) {
-      return;
-    }
+    const result = await Swal.fire({
+      title: '¿Eliminar Evento?',
+      text: `¿Estás seguro de eliminar el evento ${id_evento}? Esto borrará su historial y documentos generados.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!result.isConfirmed) return;
+    
     setLoadingMessage('Eliminando evento...');
     try {
       const res = await axios.delete(`http://localhost:5000/api/evento/${id_evento}`);
       if (res.data.status === 'success') {
         fetchHistorial();
-        alert('Evento eliminado correctamente.');
+        Swal.fire('Eliminado', 'Evento eliminado correctamente.', 'success');
       }
     } catch (error) {
-      alert('Error al eliminar el evento.');
+      Swal.fire('Error', 'Error al eliminar el evento.', 'error');
     } finally {
       setLoadingMessage('');
     }
@@ -260,6 +315,8 @@ function App() {
     formData.append('file', file);
     formData.append('id_evento', eventId);
     formData.append('docs_seleccionados', selectedDocs.join(','));
+    const tipoCurso = document.getElementById('tipo_curso_select') ? document.getElementById('tipo_curso_select').value : 'Actualización';
+    formData.append('tipo_curso', tipoCurso);
 
     setIsLoading(true);
     setLoadingMessage('Generando formatos de Word en el servidor...');
@@ -293,7 +350,7 @@ function App() {
       setStatus({ type: 'success', message: '¡Descarga del expediente completada con éxito!' });
     } catch (error) {
       setStatus({ type: 'error', message: 'Error al descargar. Verifica que ya estén generados.' });
-      alert('Error al descargar el archivo. Es posible que aún no se haya generado.');
+      Swal.fire('Error', 'Error al descargar el archivo. Es posible que aún no se haya generado.', 'error');
     } finally {
       setLoadingMessage('');
     }
@@ -327,7 +384,13 @@ function App() {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `Guia_Asistencia_Generada.xlsx`);
+      const contentDisposition = response.headers['content-disposition'];
+      let fileName = `Guia de Asistencia - ${eventId || 'Generada'}.xlsx`;
+      if (contentDisposition) {
+        const fileNameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (fileNameMatch && fileNameMatch.length === 2) fileName = fileNameMatch[1];
+      }
+      link.setAttribute('download', fileName);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -380,8 +443,10 @@ function App() {
       ['Total Capacitaciones', stats.total_trabajadores],
       ['Trabajadores de Baja', stats.trabajadores_baja],
       ['Eventos Cancelados', stats.cursos_cancelados],
+      ['Eventos Finalizados', stats.cursos_finalizados ?? 0],
       ['Promedio General', stats.promedio_general],
       ['Trabajadores Reprobados', stats.reprobados],
+      ['Trabajadores Aprobados', stats.aprobados],
       [],
       ['Top 5 Eventos', 'Participantes'],
       ...(stats.top_cursos || []).map(c => [c.nombre_evento, c.total_capacitados]),
@@ -411,7 +476,7 @@ function App() {
       link.download = 'dashboard_graficas.png';
       link.click();
     } catch(err) {
-      alert("Error al exportar gráficas");
+      Swal.fire('Error', 'Error al exportar gráficas', 'error');
     } finally {
       setLoadingMessage('');
     }
@@ -450,10 +515,10 @@ function App() {
             </button>
             {isMenuOpen && (
               <div className="dropdown-menu">
-                <button className={activeView === 'generador' ? 'active' : ''} onClick={() => changeView('generador')}>📄 Gestión de Expedientes</button>
-                <button className={activeView === 'historial' ? 'active' : ''} onClick={() => changeView('historial')}>📚 Historial de Eventos</button>
-                <button className={activeView === 'dashboard' ? 'active' : ''} onClick={() => changeView('dashboard')}>📊 Dashboard Estadístico</button>
-                <button className={activeView === 'catalogos' ? 'active' : ''} onClick={() => changeView('catalogos')}>📁 Actualizar Catálogos</button>
+                <button className={activeView === 'generador' ? 'active' : ''} onClick={() => changeView('generador')}>Gestión de Expedientes</button>
+                <button className={activeView === 'historial' ? 'active' : ''} onClick={() => changeView('historial')}>Historial de Eventos</button>
+                <button className={activeView === 'dashboard' ? 'active' : ''} onClick={() => changeView('dashboard')}>Dashboard Estadístico</button>
+                <button className={activeView === 'catalogos' ? 'active' : ''} onClick={() => changeView('catalogos')}>Actualizar Catálogos</button>
               </div>
             )}
           </div>
@@ -468,7 +533,7 @@ function App() {
           <section className="card full-width-card fade-in">
             <div className="dashboard-header">
               <h2>Historial de Eventos y Proyectos</h2>
-              <button onClick={fetchHistorial} className="btn-refresh">🔄 Actualizar</button>
+              <button onClick={fetchHistorial} className="btn-refresh">Actualizar</button>
             </div>
             
             <div style={{ overflowX: 'auto', marginTop: '1.5rem' }}>
@@ -489,6 +554,7 @@ function App() {
                         <td style={{ padding: '12px', fontWeight: 'bold', color: '#1a3b2b' }}>
                           {curso.id_evento}
                           {curso.estado === 'CANCELADO' && <span style={{marginLeft: '8px', color: 'red', fontSize: '0.8rem'}}>(CANCELADO)</span>}
+                          {curso.estado === 'FINALIZADO' && <span style={{marginLeft: '8px', color: '#28a745', fontSize: '0.8rem'}}>(FINALIZADO)</span>}
                         </td>
                         <td style={{ padding: '12px' }}>{curso.nombre_evento}</td>
                         <td style={{ padding: '12px', textAlign: 'center' }}>
@@ -504,7 +570,7 @@ function App() {
                             style={{ padding: '6px 12px', backgroundColor: '#1a3b2b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}
                             title="Descargar ZIP"
                           >
-                            📥 ZIP
+                             ZIP
                           </button>
                           <button 
                             onClick={() => handleDeleteEvent(curso.id_evento)} 
@@ -532,12 +598,15 @@ function App() {
           <section className="card full-width-card fade-in">
             <div className="dashboard-header">
               <h2>Detalles del Evento: {selectedEventId}</h2>
-              <button onClick={() => changeView('historial')} className="btn-refresh">⬅️ Volver</button>
+              <button onClick={() => changeView('historial')} className="btn-refresh"> Volver</button>
             </div>
             
             <div style={{display: 'flex', gap: '1rem', marginTop: '1rem', flexWrap: 'wrap'}}>
               <button onClick={handleCancelarEvento} style={{backgroundColor: '#dc3545', color: '#fff', padding: '10px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>
-                ❌ Cancelar Evento
+                 Cancelar Evento
+              </button>
+              <button onClick={handleFinalizarEvento} style={{backgroundColor: '#28a745', color: '#fff', padding: '10px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>
+                 Finalizar Evento
               </button>
               <form onSubmit={handleSubirSCPM07} style={{display: 'flex', gap: '10px', alignItems: 'center', backgroundColor: '#f8f9fa', padding: '10px', borderRadius: '4px', border: '1px solid #ddd'}}>
                 <label style={{fontWeight: 'bold'}}>Subir SCPM-07 (Calificaciones):</label>
@@ -626,7 +695,7 @@ function App() {
                         style={{ flex: 1 }}
                       />
                       <button type="submit" disabled={isSearching || !eventId} className="btn-secondary search-btn">
-                        {isSearching ? 'Buscando...' : '🔍 Buscar Fase'}
+                        {isSearching ? 'Buscando...' : ' Buscar Fase'}
                       </button>
                     </form>
                   </div>
@@ -662,7 +731,12 @@ function App() {
                 </div>
 
                 <div className="form-group document-selection" style={{ marginTop: '1.5rem', textAlign: 'left' }}>
-                  <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '0.5rem' }}>Selecciona los documentos a generar:</label>
+                  <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '0.5rem' }}>3. Tipo de Curso:</label>
+                  <select id="tipo_curso_select" className="text-input" style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc', width: '100%', marginBottom: '1rem' }}>
+                    <option value="Actualización">Actualización</option>
+                    <option value="Ascenso">Ascenso</option>
+                  </select>
+                  <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '0.5rem' }}>4. Selecciona los documentos a generar:</label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '8px' }}>
                     {todasLasPlantillas.map(doc => (
                       <label key={doc} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', cursor: 'pointer' }}>
@@ -698,7 +772,7 @@ function App() {
                 style={{ maxWidth: '400px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontSize: '1.1rem', padding: '1rem' }} 
                 disabled={isLoading || !eventId}
               >
-                📥 Descargar Expediente ZIP
+                 Descargar Expediente ZIP
               </button>
             </section>
           </div>
@@ -712,7 +786,7 @@ function App() {
               <div>
                 <button onClick={handleExportDashboardImage} className="btn-secondary" style={{ marginRight: '10px' }}>🖼️ Exportar Gráficas (Imagen)</button>
                 <button onClick={handleExportDashboard} className="btn-secondary" style={{ marginRight: '10px' }}>📥 Exportar CSV</button>
-                <button onClick={fetchStats} className="btn-refresh">🔄 Actualizar</button>
+                <button onClick={fetchStats} className="btn-refresh"> Actualizar</button>
               </div>
             </div>
             
@@ -720,6 +794,10 @@ function App() {
               <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #1a3b2b' }}>
                 <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Eventos</h3>
                 <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1a3b2b', margin: '5px 0 0 0' }}>{stats.total_cursos}</p>
+              </div>
+              <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #28a745' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Finalizados</h3>
+                <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#28a745', margin: '5px 0 0 0' }}>{stats.cursos_finalizados ?? 0}</p>
               </div>
               <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #b38e5d' }}>
                 <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Capacitaciones</h3>
@@ -737,6 +815,10 @@ function App() {
                 <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Promedio Gral</h3>
                 <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#17a2b8', margin: '5px 0 0 0' }}>{(stats.promedio_general ?? 0).toFixed(1)}</p>
               </div>
+              <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #28a745' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Aprobados</h3>
+                <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#28a745', margin: '5px 0 0 0' }}>{stats.aprobados ?? 0}</p>
+              </div>
               <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #6f42c1' }}>
                 <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Reprobados</h3>
                 <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#6f42c1', margin: '5px 0 0 0' }}>{stats.reprobados ?? 0}</p>
@@ -745,7 +827,7 @@ function App() {
 
             {stats.plan_accion && (
               <div style={{ backgroundColor: stats.plan_accion.startsWith('ALERTA') ? '#f8d7da' : stats.plan_accion.startsWith('PRECAUCIÓN') ? '#fff3cd' : '#d4edda', padding: '1rem', borderRadius: '8px', marginBottom: '2rem', border: '1px solid #ccc' }}>
-                <h3 style={{ marginTop: 0, color: '#333' }}>📋 Plan de Acción Recomendado (Índice de Reprobación)</h3>
+                <h3 style={{ marginTop: 0, color: '#333' }}> Plan de Acción Recomendado (Índice de Reprobación)</h3>
                 <p style={{ margin: 0, color: '#444', fontWeight: 'bold' }}>{stats.plan_accion}</p>
               </div>
             )}
@@ -845,7 +927,7 @@ function App() {
                     <BarChart data={stats.promedios_cursos} margin={{ top: 10, right: 10, left: -20, bottom: 40 }}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="nombre_evento" tick={{fontSize: 10}} angle={-45} textAnchor="end" />
-                      <YAxis domain={[0, 100]} />
+                      <YAxis domain={[0, 10]} />
                       <RechartsTooltip />
                       <Bar dataKey="promedio_curso" fill="#17a2b8" name="Promedio" />
                     </BarChart>

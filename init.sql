@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS cursos (
     nombre_evento VARCHAR(255) NOT NULL,
     fase_actual INT DEFAULT 1,
     estado VARCHAR(20) DEFAULT 'ACTIVO',
+    tipo_curso VARCHAR(50) DEFAULT NULL,
     fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS historial_capacitacion (
     nombre_trabajador VARCHAR(255) NOT NULL,
     estado VARCHAR(20) DEFAULT 'ACTIVO',
     calificacion DECIMAL(5,2) DEFAULT NULL,
+    motivo_baja TEXT DEFAULT NULL,
     fecha_generacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (id_evento) REFERENCES cursos(id_evento) ON DELETE CASCADE
 );
