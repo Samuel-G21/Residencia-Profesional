@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+}, (error) => {
+  return Promise.reject(error);
+});
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import html2canvas from 'html2canvas';
 import './App.css';
@@ -7,6 +17,10 @@ import Swal from 'sweetalert2';
 
 function App() {
   // --- Estados de Navegación ---
+  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('isAuthenticated') === 'true');
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [loginError, setLoginError] = useState('');
+  
   const [activeView, setActiveView] = useState('generador');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -49,6 +63,27 @@ function App() {
     );
   };
 
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const response = await axios.post('http://localhost:5000/api/auth/login', loginForm);
+      if (response.data.status === 'success') {
+        localStorage.setItem('isAuthenticated', 'true');
+        localStorage.setItem('token', response.data.token);
+        setIsAuthenticated(true);
+      }
+    } catch (error) {
+      setLoginError(error.response?.data?.message || 'Error al iniciar sesión');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('isAuthenticated');
+    localStorage.removeItem('token');
+    setIsAuthenticated(false);
+  };
+
   // --- Estados del Dashboard Estadístico ---
   const [stats, setStats] = useState({
     total_cursos: 0,
@@ -72,6 +107,11 @@ function App() {
 
   // --- Estados de Historial ---
   const [historialCursos, setHistorialCursos] = useState([]);
+  
+  // --- Estados de Plantillas ---
+  const [templateFile, setTemplateFile] = useState(null);
+  const [templateStatus, setTemplateStatus] = useState({ type: '', message: '' });
+  const [isTemplateLoading, setIsTemplateLoading] = useState(false);
   
   // --- Mensaje Global de Carga ---
   const [loadingMessage, setLoadingMessage] = useState('');
@@ -436,6 +476,43 @@ function App() {
     }
   };
 
+  const handleTemplateUpload = async (e) => {
+    e.preventDefault();
+    if (!templateFile) {
+      setTemplateStatus({ type: 'error', message: 'Selecciona una plantilla .docx para subir.' });
+      return;
+    }
+    const formData = new FormData();
+    formData.append('file', templateFile);
+    setIsTemplateLoading(true);
+    setTemplateStatus({ type: 'info', message: 'Procesando plantilla y guardando en el servidor...' });
+
+    try {
+      const response = await axios.post('http://localhost:5000/api/upload-template', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setTemplateStatus({ type: 'success', message: response.data.message });
+      setTimeout(() => {
+        setTemplateFile(null);
+        setTemplateStatus({ type: '', message: '' });
+      }, 4000);
+      
+      // Update selectedDocs array to include the new template if it's not there
+      if (response.data.status === 'success') {
+         if (!todasLasPlantillas.includes(templateFile.name)) {
+            // Note: Since todasLasPlantillas is currently a static array inside the component,
+            // we should ideally fetch it from the backend. For now, we rely on the component
+            // re-rendering or user action, but the backend handles it.
+         }
+      }
+    } catch (error) {
+      setTemplateStatus({ type: 'error', message: error.response?.data?.message || 'Error al subir la plantilla.' });
+    } finally {
+      setIsTemplateLoading(false);
+    }
+  };
+
+
   const handleExportDashboard = () => {
     const csvContent = [
       ['KPI', 'Valor'],
@@ -487,6 +564,44 @@ function App() {
     setIsMenuOpen(false);
   };
 
+  if (!isAuthenticated) {
+    return (
+      <div className="app-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#f4f6f8' }}>
+        <div className="card" style={{ maxWidth: '400px', width: '100%', padding: '2rem' }}>
+          <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+            <h2 style={{ color: '#1a3b2b', marginTop: '10px' }}>Iniciar Sesión</h2>
+          </div>
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div>
+              <label style={{ fontWeight: 'bold' }}>Usuario</label>
+              <input 
+                type="text" 
+                className="text-input" 
+                style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }}
+                value={loginForm.username} 
+                onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })} 
+                required 
+              />
+            </div>
+            <div>
+              <label style={{ fontWeight: 'bold' }}>Contraseña</label>
+              <input 
+                type="password" 
+                className="text-input"
+                style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }}
+                value={loginForm.password} 
+                onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} 
+                required 
+              />
+            </div>
+            {loginError && <p style={{ color: '#dc3545', fontSize: '0.9rem', margin: 0 }}>{loginError}</p>}
+            <button type="submit" className="btn-primary" style={{ marginTop: '1rem', width: '100%' }}>Ingresar</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       {/* OVERLAY DE CARGA (NUEVO) */}
@@ -519,6 +634,8 @@ function App() {
                 <button className={activeView === 'historial' ? 'active' : ''} onClick={() => changeView('historial')}>Historial de Eventos</button>
                 <button className={activeView === 'dashboard' ? 'active' : ''} onClick={() => changeView('dashboard')}>Dashboard Estadístico</button>
                 <button className={activeView === 'catalogos' ? 'active' : ''} onClick={() => changeView('catalogos')}>Actualizar Catálogos</button>
+                <button className={activeView === 'plantillas' ? 'active' : ''} onClick={() => changeView('plantillas')}>Gestor de Plantillas</button>
+                <button onClick={handleLogout} style={{ color: '#dc3545', fontWeight: 'bold' }}>Cerrar Sesión</button>
               </div>
             )}
           </div>
@@ -737,6 +854,10 @@ function App() {
                     <option value="Ascenso">Ascenso</option>
                   </select>
                   <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '0.5rem' }}>4. Selecciona los documentos a generar:</label>
+                  <div style={{ marginBottom: '1rem', display: 'flex', gap: '10px' }}>
+                    <button type="button" onClick={() => setSelectedDocs(todasLasPlantillas)} className="btn-secondary" style={{ padding: '5px 10px', fontSize: '0.9rem' }}>Seleccionar Todos</button>
+                    <button type="button" onClick={() => setSelectedDocs([])} className="btn-secondary" style={{ padding: '5px 10px', fontSize: '0.9rem' }}>Deseleccionar Todos</button>
+                  </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '8px' }}>
                     {todasLasPlantillas.map(doc => (
                       <label key={doc} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', cursor: 'pointer' }}>
@@ -879,13 +1000,15 @@ function App() {
                     <PieChart>
                       <Pie 
                         data={[
-                          { name: 'Activos', value: stats.total_cursos - (stats.cursos_cancelados || 0) },
-                          { name: 'Cancelados', value: stats.cursos_cancelados || 0 }
+                          { name: 'Activos', value: stats.total_cursos - (stats.cursos_cancelados || 0) - (stats.cursos_finalizados || 0) },
+                          { name: 'Cancelados', value: stats.cursos_cancelados || 0 },
+                          { name: 'Finalizados', value: stats.cursos_finalizados || 0 }
                         ]} 
                         dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={(entry) => entry.name}
                       >
                         <Cell fill="#1a3b2b" />
                         <Cell fill="#dc3545" />
+                        <Cell fill="#17a2b8" />
                       </Pie>
                       <RechartsTooltip />
                     </PieChart>
@@ -954,6 +1077,82 @@ function App() {
                 <input type="file" accept=".xlsx" onChange={(e) => setCatalogFile(e.target.files[0])} className="file-input" />
                 <button type="submit" disabled={isCatalogLoading} className="btn-primary">Sobrescribir Catálogo</button>
               </form>
+           </section>
+        )}
+
+        {/* VISTA 5: GESTOR DE PLANTILLAS */}
+        {activeView === 'plantillas' && (
+           <section className="card full-width-card fade-in">
+              <h2>Gestor de Plantillas</h2>
+              <p className="card-description">
+                Sube nuevas plantillas de Word (.docx) para que el sistema las pueda autocompletar.
+                Para que el sistema sepa dónde colocar cada dato, debes usar las <b>etiquetas</b> que se muestran abajo.
+                Sólo copia y pega la etiqueta en tu documento Word. El sistema las convertirá automáticamente.
+              </p>
+              
+              <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', marginTop: '1.5rem' }}>
+                <div style={{ flex: '1 1 400px', backgroundColor: '#f8f9fa', padding: '1.5rem', borderRadius: '8px', border: '1px solid #e9ecef' }}>
+                  <h3>Subir Nueva Plantilla</h3>
+                  <form onSubmit={handleTemplateUpload} className="upload-form" style={{ marginTop: '1rem' }}>
+                    <input 
+                      type="file" 
+                      accept=".docx" 
+                      onChange={(e) => setTemplateFile(e.target.files[0])} 
+                      className="file-input" 
+                      style={{ marginBottom: '1rem', width: '100%' }}
+                    />
+                    <button type="submit" disabled={isTemplateLoading} className="btn-primary" style={{ width: '100%' }}>
+                      {isTemplateLoading ? 'Subiendo...' : 'Subir Plantilla'}
+                    </button>
+                  </form>
+                  {templateStatus.message && (
+                    <div className={`status-panel ${templateStatus.type}`} style={{ marginTop: '1rem' }}>
+                      <p>{templateStatus.message}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ flex: '2 1 500px' }}>
+                  <h3>Etiquetas Disponibles (Cheatsheet)</h3>
+                  <p style={{ fontSize: '0.9rem', color: '#555', marginBottom: '1rem' }}>Haz clic en cualquier etiqueta para copiarla al portapapeles.</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                    {[
+                      '[FICHA]', '[APELLIDO_PATERNO]', '[APELLIDO_MATERNO]', '[NOMBRE]', 
+                      '[NOMBRE_COMPLETO]', '[CURP]', '[NOMBRE_EVENTO]', '[CLAVE_EVENTO]', 
+                      '[DURACION]', '[NOMBRE_INSTRUCTOR]', '[FICHA_INSTRUCTOR]', 
+                      '[FECHA_INICIO]', '[FECHA_TERMINO]', '[DIA_INICIO]', '[MES_INICIO]', 
+                      '[ANIO_INICIO]', '[DIA_TERMINO]', '[MES_TERMINO]', '[ANIO_TERMINO]', 
+                      '[CATEGORIA]', '[NIVEL]', '[DEPARTAMENTO]', '[TIPO_CURSO]'
+                    ].map(tag => (
+                      <div 
+                        key={tag} 
+                        onClick={() => {
+                          navigator.clipboard.writeText(tag);
+                          Swal.fire({
+                            icon: 'success',
+                            title: 'Copiado',
+                            text: `Etiqueta ${tag} copiada al portapapeles`,
+                            timer: 1500,
+                            showConfirmButton: false
+                          });
+                        }}
+                        style={{
+                          backgroundColor: '#e9ecef', 
+                          padding: '8px 12px', 
+                          borderRadius: '4px', 
+                          fontFamily: 'monospace', 
+                          cursor: 'pointer',
+                          textAlign: 'center',
+                          border: '1px solid #ccc'
+                        }}
+                        title="Clic para copiar"
+                      >
+                        {tag}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
            </section>
         )}
       </main>

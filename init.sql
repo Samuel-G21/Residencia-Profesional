@@ -29,3 +29,10 @@ CREATE TABLE IF NOT EXISTS curps (
     ficha VARCHAR(50) PRIMARY KEY,
     curp VARCHAR(18) NOT NULL
 );
+
+-- Tabla para usuarios del sistema
+CREATE TABLE IF NOT EXISTS usuarios (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL
+);
