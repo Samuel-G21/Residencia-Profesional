@@ -58,6 +58,20 @@ def get_stats():
             plan_accion = f"NORMAL: Índice de reprobación bajo ({reprobados_porcentaje:.1f}%)."
         else:
             plan_accion = "EXCELENTE: Ningún trabajador reprobado."
+            
+        # 13. Hombres y Mujeres (basado en CURP)
+        # La posición 11 del CURP (substring de 1 basado) indica el género: 'H' o 'M'
+        genero_rows = db.session.execute(text("""
+            SELECT 
+                SUM(CASE WHEN SUBSTRING(c.curp, 11, 1) = 'H' THEN 1 ELSE 0 END) as hombres,
+                SUM(CASE WHEN SUBSTRING(c.curp, 11, 1) = 'M' THEN 1 ELSE 0 END) as mujeres
+            FROM historial_capacitacion h
+            JOIN curps c ON h.ficha_trabajador = c.ficha
+        """)).first()
+        
+        hombres = int(genero_rows.hombres) if genero_rows and genero_rows.hombres else 0
+        mujeres = int(genero_rows.mujeres) if genero_rows and genero_rows.mujeres else 0
+
 
         return jsonify({
             "status": "success", 
@@ -75,7 +89,9 @@ def get_stats():
                 "reprobados": reprobados,
                 "aprobados": aprobados,
                 "promedios_cursos": promedios_cursos,
-                "plan_accion": plan_accion
+                "plan_accion": plan_accion,
+                "hombres": hombres,
+                "mujeres": mujeres
             }
         }), 200
     except Exception as e:

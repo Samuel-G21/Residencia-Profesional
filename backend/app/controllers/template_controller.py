@@ -9,9 +9,11 @@ def upload_template():
         return jsonify({"status": "error", "message": "No se subió ningún archivo"}), 400
     
     file = request.files['file']
-    if not file.filename.endswith('.docx'):
-        return jsonify({"status": "error", "message": "Solo se permiten archivos .docx"}), 400
+    if not (file.filename.endswith('.docx') or file.filename.endswith('.xlsx')):
+        return jsonify({"status": "error", "message": "Solo se permiten archivos .docx o .xlsx"}), 400
 
+    filename = file.filename
+    
     filename = file.filename
     # Define mapping from simple tags to jinja tags
     tag_mapping = {
@@ -80,7 +82,7 @@ def upload_template():
         return xml_str
 
     try:
-        # Read the docx file as a zip
+        # Read the docx/xlsx file as a zip
         file_bytes = file.read()
         
         # We will process the XML directly to replace the simple tags with jinja tags
@@ -89,7 +91,13 @@ def upload_template():
             with zipfile.ZipFile(out_bytes, 'w') as zout:
                 for item in zin.infolist():
                     content = zin.read(item.filename)
-                    if item.filename.endswith('.xml') and (item.filename.startswith('word/document') or item.filename.startswith('word/header') or item.filename.startswith('word/footer')):
+                    if item.filename.endswith('.xml') and (
+                        item.filename.startswith('word/document') or 
+                        item.filename.startswith('word/header') or 
+                        item.filename.startswith('word/footer') or
+                        item.filename.startswith('xl/sharedStrings') or
+                        item.filename.startswith('xl/worksheets/sheet')
+                    ):
                         xml_str = content.decode('utf-8')
                         xml_str = replace_tags(xml_str)
                         content = xml_str.encode('utf-8')

@@ -76,17 +76,18 @@ def generate_docs():
             '2. Constancias de Habilidades DC-3 2026 COMBINADA.docx',
             'SCPM-04 COMBINADA.docx',
             'SCPM-04.docx',
-            'SCPM-06 COMBINADA.docx'
+            'SCPM-06 COMBINADA.docx',
+            'SCPM-07.xlsx'
         ]
         
         todas_grp = [
             '5. Carta Compromiso Instructor 2026 COMBINADA.docx',
             'FVC.docx',
             'Informe Técnico Instructor 2025.docx',
-            'SCPM-05 2025.docx'
+            'SCPM-05 2025.docx',
+            'SCPM-03.docx',
+            'SCPM-05A.xls'
         ]
-
-        todas_grp.append('SCPM-07.xlsx')
 
         if docs_seleccionados_str:
             lista_seleccionados = [d.strip() for d in docs_seleccionados_str.split(',')]
@@ -159,21 +160,45 @@ def generate_docs():
                 "categoria_trabajador": cat,
                 "nivel": niv,
                 "departamento": depto,
-                "tipo_curso": tipo_curso
+                "tipo_curso": tipo_curso,
+                "nombre_supervisor": nombre_instructor,
+                "ficha_supervisor": ficha_instructor
             }
 
             for p in plantillas_ind:
                 t_path = os.path.join('templates', p)
                 if os.path.exists(t_path):
-                    try:
-                        doc = DocxTemplate(t_path)
-                        doc.render(ctx_ind)
-                        ficha_segura = re.sub(r'[^a-zA-Z0-9]', '', ficha)
-                        out_name = f"{id_evento}_{ficha_segura}_{p.replace('.docx', '')}.docx"
-                        doc.save(os.path.join(evento_dir, out_name))
-                        docs_gen.append(out_name)
-                    except Exception as ex:
-                        print(f"Error en individual {p}: {ex}")
+                    if p.endswith('.docx'):
+                        try:
+                            doc = DocxTemplate(t_path)
+                            doc.render(ctx_ind)
+                            ficha_segura = re.sub(r'[^a-zA-Z0-9]', '', ficha)
+                            out_name = f"{id_evento}_{ficha_segura}_{p.replace('.docx', '')}.docx"
+                            doc.save(os.path.join(evento_dir, out_name))
+                            docs_gen.append(out_name)
+                        except Exception as ex:
+                            print(f"Error en individual {p}: {ex}")
+                    elif p.endswith('.xlsx'):
+                        if p == 'SCPM-07.xlsx' and tipo_curso != 'Ascenso':
+                            continue
+                        try:
+                            import openpyxl
+                            from jinja2 import Template
+                            wb = openpyxl.load_workbook(t_path)
+                            for ws in wb.worksheets:
+                                for row in ws.iter_rows():
+                                    for cell in row:
+                                        if cell.value and isinstance(cell.value, str) and '{{' in cell.value:
+                                            try:
+                                                cell.value = Template(cell.value).render(ctx_ind)
+                                            except Exception:
+                                                pass
+                            ficha_segura = re.sub(r'[^a-zA-Z0-9]', '', ficha)
+                            out_name = f"{id_evento}_{ficha_segura}_{p.replace('.xlsx', '')}.xlsx"
+                            wb.save(os.path.join(evento_dir, out_name))
+                            docs_gen.append(out_name)
+                        except Exception as ex:
+                            print(f"Error en individual xlsx {p}: {ex}")
 
         ctx_grp = {
             "clave_evento": id_evento,
@@ -182,6 +207,8 @@ def generate_docs():
             "duracion": duracion_curso,
             "nombre_instructor": nombre_instructor,
             "ficha_instructor": ficha_instructor,
+            "nombre_supervisor": nombre_instructor,
+            "ficha_supervisor": ficha_instructor,
             "fecha_inicio": f_inicio,
             "fecha_termino": f_termino,
             "dia_inicio": dia_i,
@@ -209,33 +236,29 @@ def generate_docs():
                 elif p.endswith('.xlsx'):
                     try:
                         import openpyxl
-                        participantes = ctx_grp.get('lista_participantes', [])
-                        baja_fichas = [h.ficha_trabajador for h in HistorialCapacitacion.query.filter_by(id_evento=id_evento, estado='BAJA').all()]
-                        participantes = [p for p in participantes if p['ficha'] not in baja_fichas]
-                        chunks = [participantes[i:i + 5] for i in range(0, max(1, len(participantes)), 5)]
-                        for chunk_idx, chunk in enumerate(chunks):
-                            wb = openpyxl.load_workbook(t_path)
-                            if 'Propuesta' in wb.sheetnames:
-                                ws = wb['Propuesta']
-                                if ws['D9'].value and 'nombre_evento' in str(ws['D9'].value):
-                                    ws['D9'] = ctx_grp.get('nombre_evento', '')
-                                if ws['I54'].value and 'nombre_supervisor' in str(ws['I54'].value):
-                                    inst_name = ctx_grp.get('nombre_instructor', '')
-                                    inst_ficha = ctx_grp.get('ficha_instructor', '')
-                                    ws['I54'] = f"{inst_name} F-{inst_ficha}"
-                                ws['I30'] = ''
-                                ws['I31'] = ''
-                                ws['M30'] = ''
-                                start_col = 9 
-                                for idx, part in enumerate(chunk):
-                                    ws.cell(row=30, column=start_col + idx).value = part.get('ficha', '')
-                                    ws.cell(row=31, column=start_col + idx).value = part.get('nombre_completo', '')
-                            suffix = f" ({chunk_idx + 1})" if chunk_idx > 0 else ""
-                            out_name = f"{id_evento}_EVENTO_{p.replace('.xlsx', '')}{suffix}.xlsx"
-                            wb.save(os.path.join(evento_dir, out_name))
-                            docs_gen.append(out_name)
+                        from jinja2 import Template
+                        wb = openpyxl.load_workbook(t_path)
+                        for ws in wb.worksheets:
+                            for row in ws.iter_rows():
+                                for cell in row:
+                                    if cell.value and isinstance(cell.value, str) and '{{' in cell.value:
+                                        try:
+                                            cell.value = Template(cell.value).render(ctx_grp)
+                                        except Exception:
+                                            pass
+                        out_name = f"{id_evento}_EVENTO_{p.replace('.xlsx', '')}.xlsx"
+                        wb.save(os.path.join(evento_dir, out_name))
+                        docs_gen.append(out_name)
                     except Exception as ex:
                         print(f"Error en grupal xlsx {p}: {ex}")
+                elif p.endswith('.xls'):
+                    try:
+                        import shutil
+                        out_name = f"{id_evento}_EVENTO_{p}"
+                        shutil.copy(t_path, os.path.join(evento_dir, out_name))
+                        docs_gen.append(out_name)
+                    except Exception as ex:
+                        print(f"Error en grupal xls {p}: {ex}")
 
         curso = Curso.query.filter_by(id_evento=id_evento).first()
         if not curso:

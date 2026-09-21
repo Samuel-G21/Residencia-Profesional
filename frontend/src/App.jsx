@@ -52,10 +52,12 @@ function App() {
     'FVC.docx',
     'Informe Técnico Instructor 2025.docx',
     'SCPM-05 2025.docx',
+    'SCPM-03.docx',
+    'SCPM-05A.xls',
     'SCPM-07.xlsx'
   ];
-  const [selectedDocs, setSelectedDocs] = useState(todasLasPlantillas);
 
+  const [selectedDocs, setSelectedDocs] = useState(todasLasPlantillas);
 
   const handleDocSelection = (doc) => {
     setSelectedDocs(prev => 
@@ -479,7 +481,7 @@ function App() {
   const handleTemplateUpload = async (e) => {
     e.preventDefault();
     if (!templateFile) {
-      setTemplateStatus({ type: 'error', message: 'Selecciona una plantilla .docx para subir.' });
+      setTemplateStatus({ type: 'error', message: 'Selecciona una plantilla .docx o .xlsx para subir.' });
       return;
     }
     const formData = new FormData();
@@ -1085,7 +1087,7 @@ function App() {
            <section className="card full-width-card fade-in">
               <h2>Gestor de Plantillas</h2>
               <p className="card-description">
-                Sube nuevas plantillas de Word (.docx) para que el sistema las pueda autocompletar.
+                Sube nuevas plantillas de Word (.docx) o Excel (.xlsx) para que el sistema las pueda autocompletar.
                 Para que el sistema sepa dónde colocar cada dato, debes usar las <b>etiquetas</b> que se muestran abajo.
                 Sólo copia y pega la etiqueta en tu documento Word. El sistema las convertirá automáticamente.
               </p>
@@ -1096,7 +1098,7 @@ function App() {
                   <form onSubmit={handleTemplateUpload} className="upload-form" style={{ marginTop: '1rem' }}>
                     <input 
                       type="file" 
-                      accept=".docx" 
+                      accept=".docx, .xlsx" 
                       onChange={(e) => setTemplateFile(e.target.files[0])} 
                       className="file-input" 
                       style={{ marginBottom: '1rem', width: '100%' }}
