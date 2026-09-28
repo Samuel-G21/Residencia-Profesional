@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import Swal from 'sweetalert2';
 import api from '../services/api';
 
@@ -20,9 +20,7 @@ const todasLasPlantillas = [
   'Informe Técnico Instructor 2025.docx',
   'SCPM-05 2025.docx',
   'SCPM-03.docx',
-  'SCPM-05A.xlsx',
-  'SCPM-07.xlsx'
-  
+  'SCPM-05A.xlsx'
 ];
 
 const Generador: React.FC = () => {

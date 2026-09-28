@@ -56,6 +56,14 @@ def export_stps(id_evento):
         
         mem_file = io.BytesIO()
         wb.save(mem_file)
+        
+        # Guardar una copia en la carpeta de outputs
+        evento_dir = os.path.join('outputs', str(id_evento).strip())
+        os.makedirs(evento_dir, exist_ok=True)
+        out_name = f'STPS_{id_evento}.xlsm'
+        with open(os.path.join(evento_dir, out_name), 'wb') as f:
+            f.write(mem_file.getvalue())
+
         mem_file.seek(0)
         
         return send_file(mem_file, mimetype='application/vnd.ms-excel.sheet.macroEnabled.12', as_attachment=True, download_name=f'STPS_{id_evento}.xlsm')

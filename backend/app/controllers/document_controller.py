@@ -85,8 +85,7 @@ def generate_docs():
             'FVC.docx',
             'Informe Técnico Instructor 2025.docx',
             'SCPM-05 2025.docx',
-            'SCPM-03.docx',
-            'SCPM-07.xlsx'
+            'SCPM-03.docx'
         ]
 
         if docs_seleccionados_str:

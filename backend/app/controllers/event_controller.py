@@ -4,6 +4,8 @@ from ..models.history import HistorialCapacitacion
 from ..models import db
 from sqlalchemy import text
 import pandas as pd
+import os
+
 
 def get_all_cursos():
     sql = text("""
@@ -154,6 +156,14 @@ def upload_scpm07(id_evento):
                     continue
                     
         db.session.commit()
+        # Guardar una copia en la carpeta de outputs
+        evento_dir = os.path.join('outputs', str(id_evento).strip())
+        os.makedirs(evento_dir, exist_ok=True)
+        out_name = f"SCPM-07_{id_evento}_Firmado.xlsx"
+        file.seek(0)
+        with open(os.path.join(evento_dir, out_name), 'wb') as f:
+            f.write(file.read())
+            
         return jsonify({"status": "success", "message": "Calificaciones actualizadas"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": f"Error al procesar el Excel: {str(e)}"}), 400

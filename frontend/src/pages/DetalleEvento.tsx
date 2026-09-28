@@ -209,14 +209,15 @@ const DetalleEvento: React.FC = () => {
         <button 
           onClick={handleGenerarSTPS} 
           disabled={!hasCalificaciones}
+          title={!hasCalificaciones ? "Se requiere subir SCPM-07 con calificaciones" : "Generar constancias STPS"}
           style={{backgroundColor: hasCalificaciones ? '#006B54' : '#ccc', color: '#fff', padding: '10px 15px', border: 'none', borderRadius: '4px', cursor: hasCalificaciones ? 'pointer' : 'not-allowed'}}
         >
           Generar STPS
         </button>
         <button 
           onClick={handleGenerarSCPM07} 
-          disabled={!hasCalificaciones}
-          style={{backgroundColor: hasCalificaciones ? '#006B54' : '#ccc', color: '#fff', padding: '10px 15px', border: 'none', borderRadius: '4px', cursor: hasCalificaciones ? 'pointer' : 'not-allowed'}}
+          title="Generar formato SCPM-07 en blanco para calificaciones"
+          style={{backgroundColor: '#006B54', color: '#fff', padding: '10px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
         >
           Generar SCPM-07
         </button>
