@@ -1,6 +1,7 @@
 from flask import request, jsonify, send_file
 import os
 import io
+import copy
 import re
 import zipfile
 import requests
@@ -85,7 +86,9 @@ def generate_docs():
             'FVC.docx',
             'Informe Técnico Instructor 2025.docx',
             'SCPM-05 2025.docx',
-            'SCPM-03.docx'
+            'SCPM-03.docx',
+            'SCPM-07.xlsx',
+            'SIRCE_Automatizado.xlsm'
         ]
 
         if docs_seleccionados_str:
@@ -200,6 +203,14 @@ def generate_docs():
                                         if cell.value and isinstance(cell.value, str) and '{{' in cell.value:
                                             try:
                                                 cell.value = Template(cell.value).render(ctx_ind)
+                                                ws.row_dimensions[cell.row].height = None
+                                                if cell.alignment:
+                                                    new_align = copy.copy(cell.alignment)
+                                                    new_align.wrap_text = True
+                                                    new_align.shrink_to_fit = False
+                                                    cell.alignment = new_align
+                                                else:
+                                                    cell.alignment = openpyxl.styles.Alignment(wrap_text=True)
                                             except Exception:
                                                 pass
                             ficha_segura = re.sub(r'[^a-zA-Z0-9]', '', ficha)
@@ -271,16 +282,87 @@ def generate_docs():
                         import openpyxl
                         from jinja2 import Template
                         wb = openpyxl.load_workbook(t_path)
-                        for ws in wb.worksheets:
-                            for row in ws.iter_rows():
-                                for cell in row:
-                                    if cell.value and isinstance(cell.value, str) and '{' in cell.value:
-                                        try:
+                        if p == 'SCPM-07.xlsx':
+                            original_ws = wb.worksheets[0]
+                            original_title = original_ws.title
+                            chunk_size = 5
+                            parts = ctx_grp.get("lista_participantes", [])
+                            chunks = [parts[i:i + chunk_size] for i in range(0, len(parts), chunk_size)]
+                            if not chunks:
+                                chunks = [[]]
+                                
+                            worksheets = []
+                            for chunk_idx in range(len(chunks)):
+                                ws = wb.copy_worksheet(original_ws)
+                                if len(chunks) > 1:
+                                    ws.title = f"SCPM-07 ({chunk_idx + 1})"
+                                else:
+                                    ws.title = original_title + " (new)"
+                                worksheets.append(ws)
+                                
+                            wb.remove(original_ws)
+                            if len(chunks) == 1:
+                                worksheets[0].title = original_title
+                                
+                            for chunk_idx, chunk in enumerate(chunks):
+                                ws = worksheets[chunk_idx]
+                                    
+                                ficha_row, nombre_row = None, None
+                                for row in ws.iter_rows():
+                                    for cell in row:
+                                        if cell.value and isinstance(cell.value, str):
+                                            if '{% for participante in lista_participantes %}' in cell.value or 'participante.ficha' in cell.value:
+                                                ficha_row = cell.row
+                                            if 'paticipante.nombe_completo' in cell.value or 'participante.nombre_completo' in cell.value:
+                                                nombre_row = cell.row
+                                                
+                                if ficha_row and nombre_row:
+                                    for col in range(9, 14):
+                                        ws.cell(row=ficha_row, column=col).value = ""
+                                        ws.cell(row=nombre_row, column=col).value = ""
+                                    for i, part in enumerate(chunk):
+                                        col = 9 + i
+                                        ws.cell(row=ficha_row, column=col).value = part.get('ficha', '')
+                                        ws.cell(row=nombre_row, column=col).value = part.get('nombre_completo', '')
+                                        
+                                for row in ws.iter_rows():
+                                    for cell in row:
+                                        if cell.value and isinstance(cell.value, str) and '{' in cell.value:
                                             val = cell.value.replace('{% tr %}', '')
                                             val = val.replace('paticipante.nombe_completo', 'participante.nombre_completo')
-                                            cell.value = Template(val).render(ctx_grp)
-                                        except Exception:
-                                            pass
+                                            val = val.replace('{% for participante in lista_participantes %}', '')
+                                            val = val.replace('{% endfor %}', '')
+                                            try:
+                                                cell.value = Template(val).render(ctx_grp)
+                                                ws.row_dimensions[cell.row].height = None
+                                                if cell.alignment:
+                                                    new_align = copy.copy(cell.alignment)
+                                                    new_align.wrap_text = True
+                                                    new_align.shrink_to_fit = False
+                                                    cell.alignment = new_align
+                                                else:
+                                                    cell.alignment = openpyxl.styles.Alignment(wrap_text=True)
+                                            except Exception:
+                                                pass
+                        else:
+                            for ws in wb.worksheets:
+                                for row in ws.iter_rows():
+                                    for cell in row:
+                                        if cell.value and isinstance(cell.value, str) and '{' in cell.value:
+                                            try:
+                                                val = cell.value.replace('{% tr %}', '')
+                                                val = val.replace('paticipante.nombe_completo', 'participante.nombre_completo')
+                                                cell.value = Template(val).render(ctx_grp)
+                                                ws.row_dimensions[cell.row].height = None
+                                                if cell.alignment:
+                                                    new_align = copy.copy(cell.alignment)
+                                                    new_align.wrap_text = True
+                                                    new_align.shrink_to_fit = False
+                                                    cell.alignment = new_align
+                                                else:
+                                                    cell.alignment = openpyxl.styles.Alignment(wrap_text=True)
+                                            except Exception:
+                                                pass
                         out_name = f"{id_evento}_EVENTO_{p.replace('.xlsx', '')}.xlsx"
                         wb.save(os.path.join(evento_dir, out_name))
                         docs_gen.append(out_name)

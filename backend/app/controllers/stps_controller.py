@@ -51,6 +51,14 @@ def export_stps(id_evento):
                         try:
                             # Allow Jinja to render lista_participantes
                             cell.value = Template(cell.value).render(data)
+                            ws.row_dimensions[cell.row].height = None
+                            if cell.alignment:
+                                new_align = copy.copy(cell.alignment)
+                                new_align.wrap_text = True
+                                new_align.shrink_to_fit = False
+                                cell.alignment = new_align
+                            else:
+                                cell.alignment = openpyxl.styles.Alignment(wrap_text=True)
                         except Exception as e:
                             print(f"Error procesando celda {cell.coordinate}: {e}")
         
@@ -107,74 +115,71 @@ def export_scpm07(id_evento):
             return jsonify({"status": "error", "message": "No se ha subido el archivo base SCPM-07.xlsx en templates."}), 404
 
         wb = openpyxl.load_workbook(filepath, keep_vba=False)
-        for ws in wb.worksheets:
-            start_row_idx = None
-            end_row_idx = None
+        original_ws = wb.worksheets[0]
+        
+        original_title = original_ws.title
+        
+        chunk_size = 5
+        participantes_chunks = [lista_participantes[i:i + chunk_size] for i in range(0, len(lista_participantes), chunk_size)]
+        if not participantes_chunks:
+            participantes_chunks = [[]]
+            
+        worksheets = []
+        for chunk_idx in range(len(participantes_chunks)):
+            ws = wb.copy_worksheet(original_ws)
+            if len(participantes_chunks) > 1:
+                ws.title = f"SCPM-07 ({chunk_idx + 1})"
+            else:
+                ws.title = original_title + " (new)"
+            worksheets.append(ws)
+            
+        wb.remove(original_ws)
+        if len(participantes_chunks) == 1:
+            worksheets[0].title = original_title
+            
+        for chunk_idx, chunk in enumerate(participantes_chunks):
+            ws = worksheets[chunk_idx]
+                
+            ficha_row = None
+            nombre_row = None
+            
             for row in ws.iter_rows():
                 for cell in row:
                     if cell.value and isinstance(cell.value, str):
-                        if '{% tr %}' in cell.value or '{% for participante in lista_participantes %}' in cell.value:
-                            if start_row_idx is None:
-                                start_row_idx = cell.row
-                        if '{% endfor %}' in cell.value:
-                            end_row_idx = cell.row
-                if start_row_idx and end_row_idx:
-                    break
-
-            if start_row_idx and end_row_idx:
-                block_size = end_row_idx - start_row_idx + 1
-                num_participants = len(lista_participantes)
-                
-                if num_participants > 1:
-                    ws.insert_rows(end_row_idx + 1, (num_participants - 1) * block_size)
-                    for i in range(1, num_participants):
-                        for r_offset in range(block_size):
-                            src_row = start_row_idx + r_offset
-                            tgt_row = start_row_idx + (i * block_size) + r_offset
-                            for col_idx in range(1, ws.max_column + 1):
-                                source = ws.cell(row=src_row, column=col_idx)
-                                target = ws.cell(row=tgt_row, column=col_idx)
-                                target.value = source.value
-                                if source.has_style:
-                                    target.font = copy.copy(source.font)
-                                    target.border = copy.copy(source.border)
-                                    target.fill = copy.copy(source.fill)
-                                    target.number_format = source.number_format
-                                    target.protection = copy.copy(source.protection)
-                                    target.alignment = copy.copy(source.alignment)
-                elif num_participants == 0:
-                    ws.delete_rows(start_row_idx, block_size)
-
-                if num_participants > 0:
-                    for i, participante in enumerate(lista_participantes):
-                        row_data = data.copy()
-                        row_data['participante'] = participante
-                        for r_offset in range(block_size):
-                            tgt_row = start_row_idx + (i * block_size) + r_offset
-                            for col_idx in range(1, ws.max_column + 1):
-                                cell = ws.cell(row=tgt_row, column=col_idx)
-                                if cell.value and isinstance(cell.value, str) and '{' in cell.value:
-                                    val = cell.value.replace('{% tr %}', '')
-                                    val = val.replace('paticipante.nombe_completo', 'participante.nombre_completo')
-                                    val = val.replace('{% for participante in lista_participantes %}', '')
-                                    val = val.replace('{% endfor %}', '')
-                                    try:
-                                        cell.value = Template(val).render(row_data)
-                                    except Exception:
-                                        pass
-
+                        if '{% for participante in lista_participantes %}' in cell.value or 'participante.ficha' in cell.value:
+                            ficha_row = cell.row
+                        if 'paticipante.nombe_completo' in cell.value or 'participante.nombre_completo' in cell.value:
+                            nombre_row = cell.row
+            
+            if ficha_row and nombre_row:
+                for col in range(9, 14):
+                    ws.cell(row=ficha_row, column=col).value = ""
+                    ws.cell(row=nombre_row, column=col).value = ""
+                    
+                for i, p in enumerate(chunk):
+                    col = 9 + i
+                    ws.cell(row=ficha_row, column=col).value = p.get('ficha', '')
+                    ws.cell(row=nombre_row, column=col).value = p.get('nombre_completo', '')
+                    
             for row in ws.iter_rows():
-                # Skip the template block we just processed
-                if start_row_idx and end_row_idx and start_row_idx <= row[0].row < start_row_idx + (len(lista_participantes) * block_size if len(lista_participantes) > 0 else 0):
-                    continue
                 for cell in row:
                     if cell.value and isinstance(cell.value, str) and '{' in cell.value:
+                        val = cell.value.replace('{% tr %}', '')
+                        val = val.replace('paticipante.nombe_completo', 'participante.nombre_completo')
+                        val = val.replace('{% for participante in lista_participantes %}', '')
+                        val = val.replace('{% endfor %}', '')
                         try:
-                            val = cell.value.replace('{% tr %}', '')
-                            val = val.replace('{% for participante in lista_participantes %}', '')
-                            val = val.replace('{% endfor %}', '')
                             cell.value = Template(val).render(data)
-                        except Exception:
+                            ws.row_dimensions[cell.row].height = None
+                            if cell.alignment:
+                                new_align = copy.copy(cell.alignment)
+                                new_align.wrap_text = True
+                                new_align.shrink_to_fit = False
+                                cell.alignment = new_align
+                            else:
+                                cell.alignment = openpyxl.styles.Alignment(wrap_text=True)
+                        except Exception as e:
+                            print(f"Template Error in cell {cell.coordinate}: '{cell.value}' - Error: {e}")
                             pass
         
         mem_file = io.BytesIO()
