@@ -77,7 +77,7 @@ def generate_docs():
             'SCPM-04 COMBINADA.docx',
             'SCPM-04.docx',
             'SCPM-06 COMBINADA.docx',
-            'SCPM-07.xlsx'
+            'SCPM-05A.xlsx'
         ]
         
         todas_grp = [
@@ -86,13 +86,23 @@ def generate_docs():
             'Informe Técnico Instructor 2025.docx',
             'SCPM-05 2025.docx',
             'SCPM-03.docx',
-            'SCPM-05A.xls'
+            'SCPM-07.xlsx'
         ]
 
         if docs_seleccionados_str:
-            lista_seleccionados = [d.strip() for d in docs_seleccionados_str.split(',')]
-            plantillas_ind = [p for p in todas_ind if p in lista_seleccionados]
-            plantillas_grp = [p for p in todas_grp if p in lista_seleccionados]
+            import re
+            clean_selections = re.sub(r'[^a-z0-9]', '', docs_seleccionados_str.lower())
+            
+            def is_selected(t_name):
+                c_t = re.sub(r'[^a-z0-9]', '', t_name.lower())
+                if 'registro' in c_t and 'registro' in clean_selections: return True
+                if 'dc3' in c_t and 'dc3' in clean_selections: return True
+                if 'scpm07' in c_t and 'scpm07' in clean_selections: return True
+                if 'sirce' in c_t and 'sirce' in clean_selections: return True
+                return c_t in clean_selections
+
+            plantillas_ind = [p for p in todas_ind if is_selected(p)]
+            plantillas_grp = [p for p in todas_grp if is_selected(p)]
         else:
             plantillas_ind = todas_ind
             plantillas_grp = todas_grp
@@ -117,14 +127,14 @@ def generate_docs():
             depto = str(row.get('DEPARTAMENTO', '')).strip()
             curp = diccionario_curps.get(ficha, "SIN CURP EN CATALOGO")
 
+            lista_participantes.append({
+                "ficha": ficha,
+                "nombre_completo": nombre_completo,
+                "categoria": cat,
+                "nivel": niv,
+                "departamento": depto
+            })
             if ficha:
-                lista_participantes.append({
-                    "ficha": ficha,
-                    "nombre_completo": nombre_completo,
-                    "categoria": cat,
-                    "nivel": niv,
-                    "departamento": depto
-                })
                 historial.append({
                     "id_evento": id_evento, 
                     "ficha_trabajador": ficha, 
@@ -179,7 +189,7 @@ def generate_docs():
                         except Exception as ex:
                             print(f"Error en individual {p}: {ex}")
                     elif p.endswith('.xlsx'):
-                        if p == 'SCPM-07.xlsx' and tipo_curso != 'Ascenso':
+                        if p == 'SCPM-07.xlsx':
                             continue
                         try:
                             import openpyxl
@@ -199,6 +209,16 @@ def generate_docs():
                             docs_gen.append(out_name)
                         except Exception as ex:
                             print(f"Error en individual xlsx {p}: {ex}")
+                    elif p.endswith('.xls'):
+                        try:
+                            import shutil
+                            ficha_segura = re.sub(r'[^a-zA-Z0-9]', '', ficha)
+                            out_name = f"{id_evento}_{ficha_segura}_{p}"
+                            shutil.copy(t_path, os.path.join(evento_dir, out_name))
+                            docs_gen.append(out_name)
+                        except Exception as ex:
+                            print(f"Error en individual xls {p}: {ex}")
+
 
         ctx_grp = {
             "clave_evento": id_evento,
@@ -221,7 +241,21 @@ def generate_docs():
             "tipo_curso": tipo_curso
         }
 
+        lista_activos = []
+        for p_data in lista_participantes:
+            existe = HistorialCapacitacion.query.filter_by(id_evento=id_evento, ficha_trabajador=p_data['ficha']).first()
+            if not existe or existe.estado != 'BAJA':
+                p_copy = p_data.copy()
+                p_copy['calificacion'] = existe.calificacion if existe and existe.calificacion is not None else ""
+                p_copy['nombre_trabajador'] = p_data['nombre_completo']
+                lista_activos.append(p_copy)
+
         for p in plantillas_grp:
+            if p == 'SCPM-07.xlsx':
+                ctx_grp["lista_participantes"] = lista_activos
+            else:
+                ctx_grp["lista_participantes"] = lista_participantes
+                
             t_path = os.path.join('templates', p)
             if os.path.exists(t_path):
                 if p.endswith('.docx'):
@@ -241,9 +275,11 @@ def generate_docs():
                         for ws in wb.worksheets:
                             for row in ws.iter_rows():
                                 for cell in row:
-                                    if cell.value and isinstance(cell.value, str) and '{{' in cell.value:
+                                    if cell.value and isinstance(cell.value, str) and '{' in cell.value:
                                         try:
-                                            cell.value = Template(cell.value).render(ctx_grp)
+                                            val = cell.value.replace('{% tr %}', '')
+                                            val = val.replace('paticipante.nombe_completo', 'participante.nombre_completo')
+                                            cell.value = Template(val).render(ctx_grp)
                                         except Exception:
                                             pass
                         out_name = f"{id_evento}_EVENTO_{p.replace('.xlsx', '')}.xlsx"
@@ -251,6 +287,77 @@ def generate_docs():
                         docs_gen.append(out_name)
                     except Exception as ex:
                         print(f"Error en grupal xlsx {p}: {ex}")
+                elif p.endswith('.xlsm'):
+                    try:
+                        import openpyxl
+                        wb = openpyxl.load_workbook(t_path, keep_vba=True)
+                        modo_sirce = request.form.get('modo_sirce', 'con_datos')
+                        if p == 'SIRCE_Automatizado.xlsm' and modo_sirce == 'con_datos':
+                            if 'BD_TRABAJADORES' in wb.sheetnames:
+                                ws_trab = wb['BD_TRABAJADORES']
+                                header_row = 1
+                                for r in range(1, 5):
+                                    if any(c.value == 'CURP' for c in ws_trab[r]):
+                                        header_row = r
+                                        break
+                                col_map_trab = {str(c.value).strip(): c.col_idx for c in ws_trab[header_row] if c.value}
+                                
+                                # Clear existing rows to prevent dirty data without using delete_rows (which corrupts ListObjects)
+                                for r in range(header_row + 1, ws_trab.max_row + 1):
+                                    for c in range(1, ws_trab.max_column + 1):
+                                        ws_trab.cell(row=r, column=c).value = None
+
+                                row_idx = header_row + 1
+                                for part_data in trabajadores_curso.to_dict('records'):
+                                    ficha = safe_str(part_data.get('FICHA', ''))
+                                    curp = diccionario_curps.get(ficha, "SIN CURP EN CATALOGO")
+                                    pat = str(part_data.get('PRIMER APELLIDO', '')).strip().title()
+                                    mat = str(part_data.get('SEGUNDO APELLIDO', '')).strip().title()
+                                    nom = str(part_data.get('NOMBRE', part_data.get('NOMBRE(S)', ''))).strip().title()
+                                    
+                                    if 'CURP' in col_map_trab: ws_trab.cell(row=row_idx, column=col_map_trab['CURP']).value = curp
+                                    if 'NOMBRE' in col_map_trab: ws_trab.cell(row=row_idx, column=col_map_trab['NOMBRE']).value = nom
+                                    if 'PRIMER APELLIDO' in col_map_trab: ws_trab.cell(row=row_idx, column=col_map_trab['PRIMER APELLIDO']).value = pat
+                                    if 'SEGUNDO APELLIDO' in col_map_trab: 
+                                        ws_trab.cell(row=row_idx, column=col_map_trab['SEGUNDO APELLIDO']).value = mat
+                                    elif 'SEGUNDI APELLICO' in col_map_trab:
+                                        ws_trab.cell(row=row_idx, column=col_map_trab['SEGUNDI APELLICO']).value = mat
+                                    if 'FICHA' in col_map_trab: ws_trab.cell(row=row_idx, column=col_map_trab['FICHA']).value = ficha
+                                    row_idx += 1
+                                    
+                                from openpyxl.utils import get_column_letter
+                                if ws_trab.tables:
+                                    max_col_let = get_column_letter(ws_trab.max_column)
+                                    end_r = row_idx - 1 if row_idx > header_row + 1 else header_row + 1
+                                    for t in ws_trab.tables.values():
+                                        t.ref = f"A{header_row}:{max_col_let}{end_r}"
+                                    
+                            if 'BD_CURSOS' in wb.sheetnames:
+                                ws_cur = wb['BD_CURSOS']
+                                header_row_cur = 1
+                                for r in range(1, 5):
+                                    if any(c.value == 'ID CURSO' for c in ws_cur[r]):
+                                        header_row_cur = r
+                                        break
+                                col_map_cur = {str(c.value).strip(): c.col_idx for c in ws_cur[header_row_cur] if c.value}
+                                
+                                # Clear existing rows to prevent dirty data
+                                for r in range(header_row_cur + 1, ws_cur.max_row + 1):
+                                    for c in range(1, ws_cur.max_column + 1):
+                                        ws_cur.cell(row=r, column=c).value = None
+                                            
+                                c_row = header_row_cur + 1
+                                if 'ID CURSO' in col_map_cur: ws_cur.cell(row=c_row, column=col_map_cur['ID CURSO']).value = id_evento
+                                if 'NOMBRE CURSO' in col_map_cur: ws_cur.cell(row=c_row, column=col_map_cur['NOMBRE CURSO']).value = nombre_curso
+                                if 'DURACION' in col_map_cur: ws_cur.cell(row=c_row, column=col_map_cur['DURACION']).value = duracion_curso
+                                if 'FEC INICIO' in col_map_cur: ws_cur.cell(row=c_row, column=col_map_cur['FEC INICIO']).value = f_inicio
+                                if 'FEC TERMINO' in col_map_cur: ws_cur.cell(row=c_row, column=col_map_cur['FEC TERMINO']).value = f_termino
+                                
+                        out_name = f"{id_evento}_EVENTO_{p.replace('.xlsm', '')}.xlsm"
+                        wb.save(os.path.join(evento_dir, out_name))
+                        docs_gen.append(out_name)
+                    except Exception as ex:
+                        print(f"Error en grupal xlsm {p}: {ex}")
                 elif p.endswith('.xls'):
                     try:
                         import shutil
@@ -259,6 +366,8 @@ def generate_docs():
                         docs_gen.append(out_name)
                     except Exception as ex:
                         print(f"Error en grupal xls {p}: {ex}")
+
+
 
         curso = Curso.query.filter_by(id_evento=id_evento).first()
         if not curso:
@@ -303,6 +412,8 @@ def download_docs(id_evento):
 
         docx_files = [f for f in all_files if f.endswith('.docx')]
         xlsx_files = [f for f in all_files if f.endswith('.xlsx')]
+        xlsm_files = [f for f in all_files if f.endswith('.xlsm')]
+        xls_files = [f for f in all_files if f.endswith('.xls')]
 
         gotenberg_url = os.environ.get('GOTENBERG_URL', 'http://gotenberg:3000')
 
@@ -336,6 +447,10 @@ def download_docs(id_evento):
                 zf.write(os.path.join(evento_dir, docx), docx)
             for xlsx in xlsx_files:
                 zf.write(os.path.join(evento_dir, xlsx), xlsx)
+            for xlsm in xlsm_files:
+                zf.write(os.path.join(evento_dir, xlsm), xlsm)
+            for xls in xls_files:
+                zf.write(os.path.join(evento_dir, xls), xls)
         mem_file.seek(0)
 
         return send_file(mem_file, mimetype='application/zip', as_attachment=True, download_name=f"Expediente_{id_ev}.zip")
@@ -358,8 +473,63 @@ def extract_pdf():
             id_m = re.search(r"ID SIRHN GENERADO\s*(\d+)", txt_flat)
             id_ev = id_m.group(1) if id_m else "0"
 
-            nom_m = re.search(r"TIPO DE FORMACI[OÓ]N\s+(.*?)\s+(?:CURSO|EVENTO|TALLER)", txt_flat)
-            nombre_ev = nom_m.group(1).strip() if nom_m else "SIN DATO"
+            nombre_ev = None
+            for page in pdf.pages:
+                for tabla in page.extract_tables():
+                    for r_idx, fila in enumerate(tabla):
+                        for c_idx, celda in enumerate(fila):
+                            if celda and isinstance(celda, str):
+                                c_up = celda.upper().strip()
+                                c_up_flat = c_up.replace('\n', ' ')
+                                
+                                prefixes = [
+                                    'NOMBRE DEL EVENTO', 'NOMBRE DEL CURSO', 
+                                    'NOMBRE DEL TALLER', 'NOMBRE DEL PROYECTO'
+                                ]
+                                
+                                matched_prefix = None
+                                for p in prefixes:
+                                    if c_up_flat.startswith(p):
+                                        matched_prefix = p
+                                        break
+                                        
+                                if matched_prefix:
+                                    if ':' in c_up_flat:
+                                        val = c_up_flat.split(':', 1)[1].strip()
+                                        if val: nombre_ev = val
+                                    else:
+                                        val = c_up_flat[len(matched_prefix):].strip()
+                                        if val and val not in ('EVENTO', 'CURSO', 'TALLER', 'PROYECTO'):
+                                            nombre_ev = val
+                                            
+                                    if not nombre_ev and c_idx + 1 < len(fila) and fila[c_idx + 1]:
+                                        v = str(fila[c_idx+1]).replace('\n', ' ').strip()
+                                        if v and not v.upper().startswith('FECHA') and v.upper() not in ('EVENTO', 'CURSO', 'TALLER', 'PROYECTO'):
+                                            nombre_ev = v
+                                    if not nombre_ev and r_idx + 1 < len(tabla) and tabla[r_idx + 1][c_idx]:
+                                        v = str(tabla[r_idx+1][c_idx]).replace('\n', ' ').strip()
+                                        if v and v.upper() not in ('EVENTO', 'CURSO', 'TALLER', 'PROYECTO'):
+                                            nombre_ev = v
+                        if nombre_ev: break
+                    if nombre_ev: break
+
+            if not nombre_ev or nombre_ev in ('EVENTO', 'CURSO', 'TALLER', 'PROYECTO'):
+                nombre_ev = None
+                stop_words = r"\b(?:FECHA|DURACI[OÓ]N|OBJETIVO|PERIODO|MODALIDAD|HORARIO|SEDE|LUGAR|INSTRUCTOR|ID SIRHN|ALCANCE|PERFIL|DIRIGIDO|TIPO|PARTICIPANTES|CLAVE|NO\.|VIGENCIA)\b"
+                nom_m = re.search(r"\b(?:NOMBRE DEL (?:EVENTO|CURSO|TALLER|PROYECTO)|ACCI[OÓ]N DE CAPACITACI[OÓ]N|TEMA|CURSO)\b\s*[:\-]?\s*(.+?)(?=\s+" + stop_words + r"|$)", txt_flat)
+                
+                if not nom_m:
+                    nom_m = re.search(r"\b(?:NOMBRE DEL (?:EVENTO|CURSO|TALLER|PROYECTO)|ACCI[OÓ]N DE CAPACITACI[OÓ]N|TEMA|CURSO)\b\s*[:\-]?\s*([^\n]{1,150})", texto_completo.upper())
+                
+                if nom_m:
+                    val = nom_m.group(1).strip()
+                    if val.startswith("CURSO CC"): val = val.replace("CURSO CC", "").strip()
+                    if val: nombre_ev = val
+            
+            if not nombre_ev: nombre_ev = "SIN DATO"
+            else:
+                if nombre_ev.startswith("CURSO CC"):
+                    nombre_ev = nombre_ev.replace("CURSO CC", "").strip()
 
             f_matches = re.findall(r"FECHA DE INICIO\s*(\d{2}/\d{2}/\d{4})\s*(\d{2}/\d{2}/\d{4})\s*(\d+)", txt_flat)
             if not f_matches:

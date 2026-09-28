@@ -72,6 +72,26 @@ def get_stats():
         hombres = int(genero_rows.hombres) if genero_rows and genero_rows.hombres else 0
         mujeres = int(genero_rows.mujeres) if genero_rows and genero_rows.mujeres else 0
 
+        # 14. Hombres y Mujeres por Curso
+        genero_curso_rows = db.session.execute(text('''
+            SELECT 
+                cur.nombre_evento,
+                SUM(CASE WHEN SUBSTRING(c.curp, 11, 1) = 'H' THEN 1 ELSE 0 END) as hombres,
+                SUM(CASE WHEN SUBSTRING(c.curp, 11, 1) = 'M' THEN 1 ELSE 0 END) as mujeres
+            FROM historial_capacitacion h
+            JOIN curps c ON h.ficha_trabajador = c.ficha
+            JOIN cursos cur ON h.id_evento = cur.id_evento
+            GROUP BY cur.id_evento, cur.nombre_evento
+        '''))
+        
+        genero_por_curso = []
+        for r in genero_curso_rows:
+            genero_por_curso.append({
+                "nombre_evento": r.nombre_evento,
+                "hombres": int(r.hombres) if r.hombres else 0,
+                "mujeres": int(r.mujeres) if r.mujeres else 0
+            })
+
 
         return jsonify({
             "status": "success", 
@@ -91,7 +111,8 @@ def get_stats():
                 "promedios_cursos": promedios_cursos,
                 "plan_accion": plan_accion,
                 "hombres": hombres,
-                "mujeres": mujeres
+                "mujeres": mujeres,
+                "genero_por_curso": genero_por_curso
             }
         }), 200
     except Exception as e:

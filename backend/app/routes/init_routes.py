@@ -5,6 +5,7 @@ from .document import doc_bp
 from .stats import stats_bp
 from .catalog import catalog_bp
 from .event import event_bp
+from .stps import stps_bp
 from ..controllers.auth_controller import auth_bp
 import jwt
 
@@ -15,6 +16,7 @@ def register_routes(app):
     app.register_blueprint(stats_bp, url_prefix='/api')
     app.register_blueprint(catalog_bp, url_prefix='/api')
     app.register_blueprint(event_bp, url_prefix='/api')
+    app.register_blueprint(stps_bp, url_prefix='/api')
     app.register_blueprint(auth_bp)
 
     @app.before_request

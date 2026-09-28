@@ -462,7 +462,8 @@ button:disabled {
   animation: fadeIn 0.2s ease;
 }
 
-.dropdown-menu button {
+.dropdown-menu button,
+.dropdown-menu a {
   background: none;
   border: none;
   padding: 1rem 1.5rem;
@@ -472,18 +473,23 @@ button:disabled {
   cursor: pointer;
   border-bottom: 1px solid #F1F5F9;
   transition: background-color 0.2s;
+  text-decoration: none; /* Remove underline from links */
+  display: block; /* Ensure links take up full width */
 }
 
-.dropdown-menu button:last-child {
+.dropdown-menu button:last-child,
+.dropdown-menu a:last-child {
   border-bottom: none;
 }
 
-.dropdown-menu button:hover {
+.dropdown-menu button:hover,
+.dropdown-menu a:hover {
   background-color: #F8FAFC;
   color: var(--pemex-green);
 }
 
-.dropdown-menu button.active {
+.dropdown-menu button.active,
+.dropdown-menu a.active {
   background-color: #E0F2FE;
   color: #0284C7;
   font-weight: bold;

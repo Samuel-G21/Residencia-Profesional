@@ -44,13 +44,16 @@ services:
       - gotenberg
 
   interfaz:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:5000/api
     container_name: pemex_frontend
     restart: always
     ports:
       - "3000:80"
     environment:
-      - REACT_APP_API_URL=http://localhost:5000
+      - VITE_API_URL=http://localhost:5000/api
     depends_on:
       - api
 

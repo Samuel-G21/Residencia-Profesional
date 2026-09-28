@@ -9,8 +9,8 @@ def upload_template():
         return jsonify({"status": "error", "message": "No se subió ningún archivo"}), 400
     
     file = request.files['file']
-    if not (file.filename.endswith('.docx') or file.filename.endswith('.xlsx')):
-        return jsonify({"status": "error", "message": "Solo se permiten archivos .docx o .xlsx"}), 400
+    if not (file.filename.endswith('.docx') or file.filename.endswith('.xlsx') or file.filename.endswith('.xlsm') or file.filename.endswith('.xls')):
+        return jsonify({"status": "error", "message": "Solo se permiten archivos .docx, .xlsx, .xlsm o .xls"}), 400
 
     filename = file.filename
     
@@ -82,6 +82,20 @@ def upload_template():
         return xml_str
 
     try:
+        templates_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'templates')
+        os.makedirs(templates_dir, exist_ok=True)
+        save_path = os.path.join(templates_dir, filename)
+
+        if filename.endswith('.xls'):
+            file.seek(0)
+            with open(save_path, 'wb') as f:
+                f.write(file.read())
+            return jsonify({
+                "status": "success", 
+                "message": f"Plantilla '{filename}' guardada exitosamente.",
+                "warning": "Los archivos .xls (Formato 97-2003) no soportan el reemplazo automático de etiquetas de datos. Si requiere reemplazar etiquetas como [NOMBRE], por favor guarde la plantilla en formato .xlsx e intente nuevamente."
+            }), 200
+
         # Read the docx/xlsx file as a zip
         file_bytes = file.read()
         

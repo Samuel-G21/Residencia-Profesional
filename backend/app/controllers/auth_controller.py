@@ -22,7 +22,7 @@ def login():
     if user and check_password_hash(user.password_hash, password):
         token = jwt.encode({
             'username': username,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)
         }, current_app.config.get('SECRET_KEY', 'default-secret-key'), algorithm='HS256')
         
         return jsonify({"status": "success", "message": "Login exitoso", "username": username, "token": token}), 200

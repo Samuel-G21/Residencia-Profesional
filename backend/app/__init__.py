@@ -15,30 +15,11 @@ def create_app():
     db.init_app(app)
     
     with app.app_context():
-        from sqlalchemy import text
         try:
-            db.session.execute(text("ALTER TABLE cursos ADD COLUMN tipo_curso VARCHAR(50) DEFAULT 'Actualización'"))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-        
-        try:
-            db.session.execute(text("ALTER TABLE historial_capacitacion ADD COLUMN motivo_baja TEXT"))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-
-        try:
-            db.session.execute(text('''
-                CREATE TABLE IF NOT EXISTS usuarios (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    username VARCHAR(50) UNIQUE NOT NULL,
-                    password_hash VARCHAR(255) NOT NULL
-                )
-            '''))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
+            db.create_all()
+            app.logger.info("Tablas sincronizadas con SQLAlchemy.")
+        except Exception as e:
+            app.logger.error(f"Error sincronizando tablas: {e}")
 
         # Crear el usuario admin por defecto si no existe
         try:
