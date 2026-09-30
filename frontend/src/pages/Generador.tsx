@@ -27,6 +27,7 @@ const Generador: React.FC = () => {
   const [currentPhase, setCurrentPhase] = useState(1);
   const [isSearching, setIsSearching] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  const [fileScpm03, setFileScpm03] = useState<File | null>(null);
   const [eventId, setEventId] = useState('');
   const [status, setStatus] = useState({ type: '', message: '' });
   const [isLoading, setIsLoading] = useState(false);
@@ -153,6 +154,9 @@ const Generador: React.FC = () => {
     formData.append('id_evento', eventId);
     formData.append('docs_seleccionados', selectedDocs.join(','));
     formData.append('tipo_curso', tipoCurso);
+    if (fileScpm03) {
+      formData.append('file_scpm03', fileScpm03);
+    }
 
     setIsLoading(true);
     setLoadingMessage('Generando formatos de Word en el servidor...');
@@ -276,7 +280,12 @@ const Generador: React.FC = () => {
         <form onSubmit={handleGenerate} className="upload-form">
           <div className="form-group">
             <label>2. Archivo de Asistencia (Excel extraído):</label>
-            <input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} className="file-input" />
+            <input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} className="file-input" required />
+          </div>
+
+          <div className="form-group" style={{ marginTop: '1.5rem' }}>
+            <label>2.1. Archivo SCPM-03 Lleno (Opcional, para extraer Supervisor Técnico):</label>
+            <input type="file" accept=".docx" onChange={(e) => setFileScpm03(e.target.files?.[0] || null)} className="file-input" />
           </div>
 
           <div className="form-group document-selection" style={{ marginTop: '1.5rem', textAlign: 'left' }}>
@@ -287,11 +296,20 @@ const Generador: React.FC = () => {
             </select>
             <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '0.5rem' }}>4. Selecciona los documentos a generar:</label>
             <div style={{ marginBottom: '1rem', display: 'flex', gap: '10px' }}>
-              <button type="button" onClick={() => setSelectedDocs(todasLasPlantillas)} className="btn-secondary" style={{ padding: '5px 10px', fontSize: '0.9rem' }}>Seleccionar Todos</button>
+              <button type="button" onClick={() => {
+                const visibles = todasLasPlantillas.filter(doc => {
+                  if (tipoCurso === 'Ascenso') return !doc.includes('SCPM-05 2025.docx');
+                  return !doc.includes('SCPM-05A.xlsx');
+                });
+                setSelectedDocs(visibles);
+              }} className="btn-secondary" style={{ padding: '5px 10px', fontSize: '0.9rem' }}>Seleccionar Todos</button>
               <button type="button" onClick={() => setSelectedDocs([])} className="btn-secondary" style={{ padding: '5px 10px', fontSize: '0.9rem' }}>Deseleccionar Todos</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '8px' }}>
-              {todasLasPlantillas.map(doc => (
+              {todasLasPlantillas.filter(doc => {
+                  if (tipoCurso === 'Ascenso') return !doc.includes('SCPM-05 2025.docx');
+                  return !doc.includes('SCPM-05A.xlsx');
+              }).map(doc => (
                 <label key={doc} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', cursor: 'pointer' }}>
                   <input 
                     type="checkbox" 

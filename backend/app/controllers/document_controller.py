@@ -60,6 +60,42 @@ def generate_docs():
         nombre_instructor = str(row0.get('INSTRUCTOR', row0.get('NOMBRE INSTRUCTOR', ''))).strip().title()
         ficha_instructor = str(row0.get('FICHA INSTRUCTOR', '')).strip()
 
+        nombre_supervisor = str(row0.get('NOMBRE VALIDA (AREA USUARIA)', row0.get('NOMBRE SUPERVISOR', row0.get('SUPERVISOR', '')))).strip().title()
+        ficha_supervisor = str(row0.get('FICHA VALIDA (AREA USUARIA)', row0.get('FICHA SUPERVISOR', ''))).strip()
+
+        file_scpm03 = request.files.get('file_scpm03')
+        if file_scpm03 and file_scpm03.filename.endswith('.docx'):
+            try:
+                import docx, re
+                doc_scpm03 = docx.Document(file_scpm03)
+                for table in doc_scpm03.tables:
+                    for row in table.rows:
+                        row_texts = [cell.text.strip().replace('\n', ' ') for cell in row.cells]
+                        if any("supervisor" in t.lower() and "evento" in t.lower() for t in row_texts):
+                            for t in row_texts:
+                                t_lower = t.lower()
+                                if "supervisor" in t_lower and "evento" in t_lower: continue
+                                if "nombre del supervisor" in t_lower: continue
+                                if t.strip():
+                                    ficha_match = re.search(r'\b\d{5,6}\b', t)
+                                    if ficha_match:
+                                        ficha_supervisor = ficha_match.group(0)
+                                        name_part = t[:ficha_match.start()]
+                                    else:
+                                        name_part = t
+                                    
+                                    name_part = re.sub(r'(?i)\bF\s*-?\s*$', '', name_part)
+                                    name_part = re.sub(r'(?i)\bFicha\b\s*:?', '', name_part)
+                                    name_part = re.sub(r'(?i)^(Ing\.|Lic\.|Mtra\.|Mtro\.|Dr\.|Dra\.)\s*', '', name_part)
+                                    name_part = re.sub(r'[^A-Za-zÑñÁÉÍÓÚáéíóú\s]', '', name_part).strip()
+                                    
+                                    if name_part:
+                                        nombre_supervisor = name_part.title()
+                                    break
+            except Exception as e:
+                print("Error extracting from SCPM-03:", e)
+
+
         dia_i = safe_str(row0.get('DIA I', '')).zfill(2)
         mes_i = safe_str(row0.get('MES I', '')).zfill(2)
         anio_i = safe_str(row0.get('AÑO I', '')).split('.')[0]
@@ -108,6 +144,14 @@ def generate_docs():
         else:
             plantillas_ind = todas_ind
             plantillas_grp = todas_grp
+
+        if tipo_curso.lower() == 'ascenso':
+            # Para Ascenso se usa SCPM-05A, así que quitamos SCPM-05
+            plantillas_grp = [p for p in plantillas_grp if 'SCPM-05 2025' not in p]
+        else:
+            # Para Actualización se usa SCPM-05, así que quitamos SCPM-05A
+            plantillas_ind = [p for p in plantillas_ind if 'SCPM-05A' not in p]
+            plantillas_grp = [p for p in plantillas_grp if 'SCPM-05A' not in p]
 
         evento_dir = os.path.join('outputs', id_evento)
         os.makedirs(evento_dir, exist_ok=True)
@@ -173,8 +217,8 @@ def generate_docs():
                 "nivel": niv,
                 "departamento": depto,
                 "tipo_curso": tipo_curso,
-                "nombre_supervisor": nombre_instructor,
-                "ficha_supervisor": ficha_instructor
+                "nombre_supervisor": nombre_supervisor,
+                "ficha_supervisor": ficha_supervisor
             }
 
             for p in plantillas_ind:
@@ -237,8 +281,8 @@ def generate_docs():
             "duracion": duracion_curso,
             "nombre_instructor": nombre_instructor,
             "ficha_instructor": ficha_instructor,
-            "nombre_supervisor": nombre_instructor,
-            "ficha_supervisor": ficha_instructor,
+            "nombre_supervisor": nombre_supervisor,
+            "ficha_supervisor": ficha_supervisor,
             "fecha_inicio": f_inicio,
             "fecha_termino": f_termino,
             "dia_inicio": dia_i,
@@ -620,11 +664,17 @@ def extract_pdf():
             else:
                 f_ini, f_term, dur = "SIN DATO", "SIN DATO", "0"
 
-            inst_m = re.search(r"HORARIO.*?\d{2}:\d{2}.*?\s([A-ZÑ\s]+?)\s*F-?.*?(\d{5,6})", txt_flat)
-            n_inst = inst_m.group(1).strip() if inst_m else "SIN DATO"
-            f_inst = inst_m.group(2).strip() if inst_m else "SIN DATO"
+            inst_m = re.search(r"HORARIO.*?\d{2}:\d{2}[^\s]*\s+([A-ZÑÁÉÍÓÚÜ\s\.]+?)\s*(?:F-?)?\s*(?:(?:DES\.\s*)?EJECUTIVO)?\s*(?:F-?)?\s*(\d{5,6})", txt_flat)
+            if inst_m:
+                raw_inst = inst_m.group(1).strip()
+                n_inst = re.sub(r'\b(?:DES\.\s*)?EJECUTIVO\b', '', raw_inst).strip()
+                n_inst = re.sub(r'\s+', ' ', n_inst)
+                f_inst = inst_m.group(2).strip()
+            else:
+                n_inst = "SIN DATO"
+                f_inst = "SIN DATO"
 
-            val_m = re.search(r"ID SIRHN GENERADO\s*\d+\s+[A-ZÑ\s]+?F-?\d{5,6}\s+([A-ZÑ\s]+?)\s*F-?(\d{5,6})", txt_flat)
+            val_m = re.search(r"ID SIRHN GENERADO\s*\d+\s+[A-ZÑÁÉÍÓÚÜ\.\s]+?\s*(?:F-?)?\s*\d{5,6}\s+([A-ZÑÁÉÍÓÚÜ\.\s]+?)\s*(?:F-?)?\s*(\d{5,6})", txt_flat)
             n_sup = val_m.group(1).strip() if val_m else "SIN DATO"
             f_sup = val_m.group(2).strip() if val_m else "SIN DATO"
 
@@ -677,8 +727,8 @@ def extract_pdf():
                                         "DURACION HORAS": dur,
                                         "NOMBRE INSTRUCTOR": n_inst.title(),
                                         "FICHA INSTRUCTOR": f_inst,
-                                        "NOMBRE SUPERVISOR": n_sup.title(),
-                                        "FICHA SUPERVISOR": f_sup
+                                        "NOMBRE VALIDA (AREA USUARIA)": n_sup.title(),
+                                        "FICHA VALIDA (AREA USUARIA)": f_sup
                                     })
 
         mem_file = io.BytesIO()
