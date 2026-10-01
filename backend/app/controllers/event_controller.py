@@ -99,6 +99,37 @@ def baja_trabajador(id_evento, ficha):
         return jsonify({"status": "success", "message": "Trabajador dado de baja"}), 200
     return jsonify({"status": "error", "message": "Trabajador no encontrado en el evento"}), 404
 
+def no_apto_trabajador(id_evento, ficha):
+    data = request.json or {}
+    calificacion = data.get('calificacion')
+    trabajador = HistorialCapacitacion.query.filter_by(id_evento=id_evento, ficha_trabajador=ficha).first()
+    if trabajador:
+        trabajador.estado = 'NO APTO'
+        try:
+            trabajador.calificacion = float(calificacion) if calificacion is not None else None
+        except ValueError:
+            pass
+        db.session.commit()
+        return jsonify({"status": "success", "message": "Trabajador marcado como No Apto"}), 200
+    return jsonify({"status": "error", "message": "Trabajador no encontrado en el evento"}), 404
+
+def agregar_trabajador(id_evento):
+    data = request.json or {}
+    ficha = data.get('ficha')
+    nombre = data.get('nombre')
+    
+    if not ficha or not nombre:
+        return jsonify({"status": "error", "message": "Falta ficha o nombre"}), 400
+        
+    existe = HistorialCapacitacion.query.filter_by(id_evento=id_evento, ficha_trabajador=ficha).first()
+    if existe:
+        return jsonify({"status": "error", "message": "El trabajador ya existe en este evento"}), 400
+        
+    nuevo = HistorialCapacitacion(id_evento=id_evento, ficha_trabajador=ficha, nombre_trabajador=nombre, estado='ACTIVO')
+    db.session.add(nuevo)
+    db.session.commit()
+    return jsonify({"status": "success", "message": "Trabajador agregado correctamente"}), 200
+
 def upload_scpm07(id_evento):
     if 'file' not in request.files:
         return jsonify({"status": "error", "message": "Falta el archivo SCPM-07"}), 400
@@ -167,3 +198,28 @@ def upload_scpm07(id_evento):
         return jsonify({"status": "success", "message": "Calificaciones actualizadas"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": f"Error al procesar el Excel: {str(e)}"}), 400
+
+def upload_scpm03(id_evento):
+    if 'file' not in request.files:
+        return jsonify({"status": "error", "message": "Falta el archivo SCPM-03"}), 400
+    file = request.files['file']
+    if not file.filename.endswith('.docx'):
+        return jsonify({"status": "error", "message": "Debe ser un archivo Word (.docx)"}), 400
+    
+    try:
+        curso = Curso.query.filter_by(id_evento=id_evento).first()
+        if not curso:
+            return jsonify({"status": "error", "message": "Evento no encontrado"}), 404
+            
+        evento_dir = os.path.join('outputs', str(id_evento).strip())
+        os.makedirs(evento_dir, exist_ok=True)
+        out_name = f"SCPM-03_{id_evento}_Firmado.docx"
+        file.seek(0)
+        with open(os.path.join(evento_dir, out_name), 'wb') as f:
+            f.write(file.read())
+            
+        curso.fase_actual = 2
+        db.session.commit()
+        return jsonify({"status": "success", "message": "SCPM-03 subido y evento avanzado a Fase 2"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Error al procesar el archivo: {str(e)}"}), 400

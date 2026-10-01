@@ -146,8 +146,8 @@ def generate_docs():
             plantillas_grp = todas_grp
 
         if tipo_curso.lower() == 'ascenso':
-            # Para Ascenso se usa SCPM-05A, así que quitamos SCPM-05
-            plantillas_grp = [p for p in plantillas_grp if 'SCPM-05 2025' not in p]
+            # Para Ascenso se usa SCPM-05A y SCPM-05, así que NO quitamos SCPM-05
+            pass
         else:
             # Para Actualización se usa SCPM-05, así que quitamos SCPM-05A
             plantillas_ind = [p for p in plantillas_ind if 'SCPM-05A' not in p]
@@ -298,7 +298,7 @@ def generate_docs():
         lista_activos = []
         for p_data in lista_participantes:
             existe = HistorialCapacitacion.query.filter_by(id_evento=id_evento, ficha_trabajador=p_data['ficha']).first()
-            if not existe or existe.estado != 'BAJA':
+            if not existe or (existe.estado != 'BAJA' and existe.estado != 'NO APTO'):
                 p_copy = p_data.copy()
                 p_copy['calificacion'] = existe.calificacion if existe and existe.calificacion is not None else ""
                 p_copy['nombre_trabajador'] = p_data['nombre_completo']

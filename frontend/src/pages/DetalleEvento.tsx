@@ -72,6 +72,32 @@ const DetalleEvento: React.FC = () => {
     }
   };
 
+    const handleNoApto = async (ficha: string) => {
+    const { value: calificacion } = await Swal.fire({
+      title: 'No Apto',
+      text: `Ingrese la calificación para el trabajador con ficha ${ficha}:`,
+      input: 'number',
+      showCancelButton: true,
+      inputValidator: (value) => {
+        if (!value) {
+          return '¡Necesitas ingresar una calificación!';
+        }
+      }
+    });
+
+    if (!calificacion) return;
+
+    try {
+      const res = await api.put(`/evento/${id}/trabajador/${ficha}/no_apto`, { calificacion });
+      if(res.data.status === 'success') {
+        Swal.fire('¡Éxito!', 'Trabajador marcado como No Apto', 'success');
+        if (id) fetchTrabajadoresEvento(id);
+      }
+    } catch(err) {
+      Swal.fire('Error', 'Error marcando como No Apto', 'error');
+    }
+  };
+
   const handleBajaTrabajador = async (ficha: string) => {
     const { value: motivo } = await Swal.fire({
       title: 'Dar de Baja',
@@ -240,11 +266,14 @@ const DetalleEvento: React.FC = () => {
               <tr key={w.ficha_trabajador} style={{ borderBottom: '1px solid #eee' }}>
                 <td style={{ padding: '12px' }}>{w.ficha_trabajador}</td>
                 <td style={{ padding: '12px' }}>{w.nombre_trabajador}</td>
-                <td style={{ padding: '12px', color: w.estado === 'BAJA' ? 'red' : 'green' }}>{w.estado}</td>
+                <td style={{ padding: '12px', color: w.estado === 'BAJA' ? 'red' : w.estado === 'NO APTO' ? 'orange' : 'green' }}>{w.estado}</td>
                 <td style={{ padding: '12px' }}>{w.calificacion ?? '-'}</td>
                 <td style={{ padding: '12px' }}>
-                  {w.estado !== 'BAJA' && (
-                    <button onClick={() => handleBajaTrabajador(w.ficha_trabajador)} style={{backgroundColor: '#ffc107', color: '#000', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Dar de Baja</button>
+                  {w.estado !== 'BAJA' && w.estado !== 'NO APTO' && (
+                    <div style={{display: 'flex', gap: '8px'}}>
+                      <button onClick={() => handleBajaTrabajador(w.ficha_trabajador)} style={{backgroundColor: '#ffc107', color: '#000', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Dar de Baja</button>
+                      <button onClick={() => handleNoApto(w.ficha_trabajador)} style={{backgroundColor: '#fd7e14', color: '#fff', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>No Apto</button>
+                    </div>
                   )}
                 </td>
               </tr>

@@ -18,7 +18,7 @@ def export_stps(id_evento):
         trabajadores = HistorialCapacitacion.query.filter_by(id_evento=id_evento).all()
         lista_participantes = []
         for t in trabajadores:
-            if t.estado != 'BAJA':
+            if t.estado not in ('BAJA', 'NO APTO'):
                 lista_participantes.append({
                     "ficha": t.ficha_trabajador,
                     "nombre_completo": t.nombre_trabajador,
@@ -89,7 +89,7 @@ def export_scpm07(id_evento):
         trabajadores = HistorialCapacitacion.query.filter_by(id_evento=id_evento).all()
         lista_participantes = []
         for t in trabajadores:
-            if t.estado != 'BAJA':
+            if t.estado not in ('BAJA', 'NO APTO'):
                 lista_participantes.append({
                     "ficha": t.ficha_trabajador,
                     "nombre_completo": t.nombre_trabajador,
