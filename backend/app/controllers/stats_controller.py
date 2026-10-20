@@ -1,54 +1,97 @@
+"""
+Controlador de Estadisticas e Indicadores Clave para el Dashboard (`stats_controller.py`).
+
+Guia para practicantes:
+Consulta las tablas `cursos`, `historial_capacitacion` y `curps` para construir todas las
+metricas que alimentan la vista `Dashboard.tsx`:
+- Totales de cursos (activos, finalizados, cancelados) y trabajadores (totales, unicos, bajas).
+- Promedio general de calificaciones, conteo de aprobados (>= 8) y reprobados (< 8).
+- Recomendacion automatica (`plan_accion`) segun el porcentaje de reprobacion.
+- Estadistica demografica por genero (Hombres vs Mujeres) extraida del caracter 11 de la CURP.
+"""
 from flask import jsonify
+from ..utils.security import error_response
 from ..models import db
 from sqlalchemy import text
 
+
 def get_stats():
+    """Endpoint `GET /api/stats`. Retorna un objeto JSON con los KPIs y series para graficas."""
     try:
-        # 1. Total courses
+        # 1. Total de cursos registrados
         tot_c = db.session.execute(text("SELECT COUNT(*) FROM cursos")).scalar() or 0
-        
-        # 2. Total workers trained
+
+        # 2. Total de registros de participacion (capacitaciones impartidas)
         tot_t = db.session.execute(text("SELECT COUNT(*) FROM historial_capacitacion")).scalar() or 0
-        
-        # 3. Unique workers trained
-        tot_unicos = db.session.execute(text("SELECT COUNT(DISTINCT ficha_trabajador) FROM historial_capacitacion")).scalar() or 0
-        
-        # 4. Top 5 courses by participation
-        top_rows = db.session.execute(text("SELECT c.nombre_evento, COUNT(h.id) as total_capacitados FROM cursos c LEFT JOIN historial_capacitacion h ON c.id_evento = h.id_evento GROUP BY c.id_evento, c.nombre_evento ORDER BY total_capacitados DESC LIMIT 5"))
+
+        # 3. Trabajadores unicos capacitados (sin duplicar fichas entre varios cursos)
+        tot_unicos = db.session.execute(
+            text("SELECT COUNT(DISTINCT ficha_trabajador) FROM historial_capacitacion")
+        ).scalar() or 0
+
+        # 4. Top 5 cursos con mayor cantidad de participantes
+        top_rows = db.session.execute(text(
+            "SELECT c.nombre_evento, COUNT(h.id) as total_capacitados "
+            "FROM cursos c LEFT JOIN historial_capacitacion h ON c.id_evento = h.id_evento "
+            "GROUP BY c.id_evento, c.nombre_evento ORDER BY total_capacitados DESC LIMIT 5"
+        ))
         top = [{"nombre_evento": r.nombre_evento, "total_capacitados": r.total_capacitados} for r in top_rows]
-        
-        # 5. Courses per phase
-        fases_rows = db.session.execute(text("SELECT fase_actual, COUNT(*) as cantidad FROM cursos GROUP BY fase_actual ORDER BY fase_actual ASC"))
+
+        # 5. Distribucion de cursos segun su fase actual (Fases 1 a 5)
+        fases_rows = db.session.execute(text(
+            "SELECT fase_actual, COUNT(*) as cantidad FROM cursos GROUP BY fase_actual ORDER BY fase_actual ASC"
+        ))
         fases_data = [{"fase_actual": r.fase_actual, "cantidad": r.cantidad} for r in fases_rows]
-        
-        # 6. Recent courses
-        recent_rows = db.session.execute(text("SELECT nombre_evento, id_evento, fecha_registro, fase_actual FROM cursos ORDER BY fecha_registro DESC LIMIT 5"))
-        recientes = [{"nombre_evento": r.nombre_evento, "id_evento": r.id_evento, "fase_actual": r.fase_actual} for r in recent_rows]
-        
-        # 7. Canceled courses
-        cancelados = db.session.execute(text("SELECT COUNT(*) FROM cursos WHERE estado = 'CANCELADO'")).scalar() or 0
-        
-        # 8. Finalizados
-        finalizados = db.session.execute(text("SELECT COUNT(*) FROM cursos WHERE estado = 'FINALIZADO'")).scalar() or 0
-        
-        # 9. Bajas
-        bajas = db.session.execute(text("SELECT COUNT(*) FROM historial_capacitacion WHERE estado = 'BAJA'")).scalar() or 0
-        
-        # 10. Promedio general
-        promedio = db.session.execute(text("SELECT AVG(calificacion) FROM historial_capacitacion WHERE calificacion IS NOT NULL")).scalar()
+
+        # 6. Ultimos 5 cursos registrados
+        recent_rows = db.session.execute(text(
+            "SELECT nombre_evento, id_evento, fecha_registro, fase_actual "
+            "FROM cursos ORDER BY fecha_registro DESC LIMIT 5"
+        ))
+        recientes = [
+            {"nombre_evento": r.nombre_evento, "id_evento": r.id_evento, "fase_actual": r.fase_actual}
+            for r in recent_rows
+        ]
+
+        # 7. Cursos cancelados y 8. Cursos finalizados
+        cancelados = db.session.execute(
+            text("SELECT COUNT(*) FROM cursos WHERE estado = 'CANCELADO'")
+        ).scalar() or 0
+        finalizados = db.session.execute(
+            text("SELECT COUNT(*) FROM cursos WHERE estado = 'FINALIZADO'")
+        ).scalar() or 0
+
+        # 9. Trabajadores dados de baja
+        bajas = db.session.execute(
+            text("SELECT COUNT(*) FROM historial_capacitacion WHERE estado = 'BAJA'")
+        ).scalar() or 0
+
+        # 10. Promedio general de calificaciones registradas
+        promedio = db.session.execute(
+            text("SELECT AVG(calificacion) FROM historial_capacitacion WHERE calificacion IS NOT NULL")
+        ).scalar()
         promedio = float(promedio) if promedio else 0
-        
-        # 11. Reprobados
-        reprobados = db.session.execute(text("SELECT COUNT(*) FROM historial_capacitacion WHERE calificacion < 8")).scalar() or 0
-        
-        # Aprobados
-        aprobados = db.session.execute(text("SELECT COUNT(*) FROM historial_capacitacion WHERE calificacion >= 8")).scalar() or 0
-        
-        # 12. Promedios cursos
-        promedios_cursos_rows = db.session.execute(text("SELECT c.nombre_evento, AVG(h.calificacion) as promedio_curso FROM cursos c JOIN historial_capacitacion h ON c.id_evento = h.id_evento WHERE h.calificacion IS NOT NULL GROUP BY c.id_evento, c.nombre_evento"))
-        promedios_cursos = [{"nombre_evento": r.nombre_evento, "promedio_curso": float(r.promedio_curso) if r.promedio_curso else 0} for r in promedios_cursos_rows]
-        
-        # Plan de accion
+
+        # 11. Conteo de reprobados (< 8) y aprobados (>= 8)
+        reprobados = db.session.execute(
+            text("SELECT COUNT(*) FROM historial_capacitacion WHERE calificacion < 8")
+        ).scalar() or 0
+        aprobados = db.session.execute(
+            text("SELECT COUNT(*) FROM historial_capacitacion WHERE calificacion >= 8")
+        ).scalar() or 0
+
+        # 12. Promedio de calificacion desglosado por curso
+        promedios_cursos_rows = db.session.execute(text(
+            "SELECT c.nombre_evento, AVG(h.calificacion) as promedio_curso "
+            "FROM cursos c JOIN historial_capacitacion h ON c.id_evento = h.id_evento "
+            "WHERE h.calificacion IS NOT NULL GROUP BY c.id_evento, c.nombre_evento"
+        ))
+        promedios_cursos = [
+            {"nombre_evento": r.nombre_evento, "promedio_curso": float(r.promedio_curso) if r.promedio_curso else 0}
+            for r in promedios_cursos_rows
+        ]
+
+        # Regla de negocio: Plan de accion automatico segun el indice de reprobacion global
         reprobados_porcentaje = (reprobados / tot_t) * 100 if tot_t > 0 else 0
         if reprobados_porcentaje > 20:
             plan_accion = f"ALERTA: Alto índice de reprobación ({reprobados_porcentaje:.1f}%). Se sugiere revisar la metodología del instructor."
@@ -58,9 +101,8 @@ def get_stats():
             plan_accion = f"NORMAL: Índice de reprobación bajo ({reprobados_porcentaje:.1f}%)."
         else:
             plan_accion = "EXCELENTE: Ningún trabajador reprobado."
-            
-        # 13. Hombres y Mujeres (basado en CURP)
-        # La posición 11 del CURP (substring de 1 basado) indica el género: 'H' o 'M'
+
+        # 13. Hombres y Mujeres totales (basado en la posicion 11 de la CURP: 'H' o 'M')
         genero_rows = db.session.execute(text("""
             SELECT 
                 SUM(CASE WHEN SUBSTRING(c.curp, 11, 1) = 'H' THEN 1 ELSE 0 END) as hombres,
@@ -68,12 +110,12 @@ def get_stats():
             FROM historial_capacitacion h
             JOIN curps c ON h.ficha_trabajador = c.ficha
         """)).first()
-        
+
         hombres = int(genero_rows.hombres) if genero_rows and genero_rows.hombres else 0
         mujeres = int(genero_rows.mujeres) if genero_rows and genero_rows.mujeres else 0
 
-        # 14. Hombres y Mujeres por Curso
-        genero_curso_rows = db.session.execute(text('''
+        # 14. Distribucion de Hombres y Mujeres desglosada por cada curso
+        genero_curso_rows = db.session.execute(text("""
             SELECT 
                 cur.nombre_evento,
                 SUM(CASE WHEN SUBSTRING(c.curp, 11, 1) = 'H' THEN 1 ELSE 0 END) as hombres,
@@ -82,8 +124,8 @@ def get_stats():
             JOIN curps c ON h.ficha_trabajador = c.ficha
             JOIN cursos cur ON h.id_evento = cur.id_evento
             GROUP BY cur.id_evento, cur.nombre_evento
-        '''))
-        
+        """))
+
         genero_por_curso = []
         for r in genero_curso_rows:
             genero_por_curso.append({
@@ -92,12 +134,11 @@ def get_stats():
                 "mujeres": int(r.mujeres) if r.mujeres else 0
             })
 
-
         return jsonify({
-            "status": "success", 
+            "status": "success",
             "data": {
-                "total_cursos": tot_c, 
-                "total_trabajadores": tot_t, 
+                "total_cursos": tot_c,
+                "total_trabajadores": tot_t,
                 "trabajadores_unicos": tot_unicos,
                 "top_cursos": top,
                 "cursos_por_fase": fases_data,
@@ -116,4 +157,4 @@ def get_stats():
             }
         }), 200
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return error_response("Ocurrió un error interno", 500, e)

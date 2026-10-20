@@ -1,3 +1,17 @@
+/**
+ * Vista de Detalle de Evento y Administracion de Participantes (`DetalleEvento.tsx`).
+ *
+ * Guia para practicantes:
+ * Muestra el listado de trabajadores inscritos en un evento especifico (`/evento/:id`) y permite:
+ * 1. Cancelar (`PUT /api/evento/:id/cancelar`) o finalizar (`PUT /api/evento/:id/finalizar`) el curso.
+ * 2. Subir el formato `SCPM-07` (.xlsx) con las calificaciones finales (`POST /api/evento/:id/scpm07`).
+ * 3. Generar y descargar el formato `SCPM-07` prellenado (`POST /api/evento/:id/scpm07/export`) y
+ *    el archivo de constancias `STPS_<id>.xlsm` (`POST /api/evento/:id/stps/export`), el cual se
+ *    habilita unicamente cuando al menos un trabajador ya cuenta con calificacion registrada.
+ * 4. Agregar manualmente un trabajador adicional al evento (`POST /api/evento/:id/trabajador`),
+ *    generando automaticamente su documentacion individual.
+ * 5. Dar de baja (`BAJA`) o marcar como reprobado (`NO APTO`) a cualquier participante activo.
+ */
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -16,6 +30,7 @@ const DetalleEvento: React.FC = () => {
     }
   }, [id]);
 
+  // Carga la lista de trabajadores inscritos en el evento actual
   const fetchTrabajadoresEvento = async (id_evento: string) => {
     try {
       const res = await api.get(`/evento/${id_evento}/trabajadores`);
@@ -27,6 +42,7 @@ const DetalleEvento: React.FC = () => {
     }
   };
 
+  // Marca el evento como FINALIZADO en la base de datos
   const handleFinalizarEvento = async () => {
     const result = await Swal.fire({
       title: '¿Finalizar Evento?',
@@ -49,6 +65,7 @@ const DetalleEvento: React.FC = () => {
     }
   };
 
+  // Marca el evento como CANCELADO en la base de datos
   const handleCancelarEvento = async () => {
     const result = await Swal.fire({
       title: '¿Cancelar Evento?',
@@ -72,7 +89,8 @@ const DetalleEvento: React.FC = () => {
     }
   };
 
-    const handleNoApto = async (ficha: string) => {
+  // Solicita la calificacion reprobatoria y marca al trabajador como NO APTO
+  const handleNoApto = async (ficha: string) => {
     const { value: calificacion } = await Swal.fire({
       title: 'No Apto',
       text: `Ingrese la calificación para el trabajador con ficha ${ficha}:`,
@@ -98,6 +116,7 @@ const DetalleEvento: React.FC = () => {
     }
   };
 
+  // Solicita el motivo de baja y actualiza el estado del trabajador a BAJA
   const handleBajaTrabajador = async (ficha: string) => {
     const { value: motivo } = await Swal.fire({
       title: 'Dar de Baja',
@@ -124,6 +143,7 @@ const DetalleEvento: React.FC = () => {
     }
   };
 
+  // Sube el archivo Excel SCPM-07 para extraer y registrar las calificaciones de los participantes
   const handleSubirSCPM07 = async (e: React.FormEvent) => {
     e.preventDefault();
     if(!scpmFile || !id) return;
@@ -145,6 +165,7 @@ const DetalleEvento: React.FC = () => {
     }
   };
 
+  // Descarga el archivo STPS_<id>.xlsm con los participantes activos y sus calificaciones
   const handleGenerarSTPS = async () => {
     if (!id) return;
     try {
@@ -169,7 +190,7 @@ const DetalleEvento: React.FC = () => {
           const json = JSON.parse(text);
           msg = json.message || msg;
         } catch (e) {
-          // ignore parsing error
+          // Ignorar error de parseo si el blob no contiene JSON
         }
       } else if (error.response?.data?.message) {
         msg = error.response.data.message;
@@ -178,6 +199,7 @@ const DetalleEvento: React.FC = () => {
     }
   };
 
+  // Descarga el formato de evaluacion SCPM-07_<id>.xlsx paginado de 5 en 5 trabajadores
   const handleGenerarSCPM07 = async () => {
     if (!id) return;
     try {
@@ -202,7 +224,7 @@ const DetalleEvento: React.FC = () => {
           const json = JSON.parse(text);
           msg = json.message || msg;
         } catch (e) {
-          // ignore parsing error
+          // Ignorar error de parseo si el blob no contiene JSON
         }
       } else if (error.response?.data?.message) {
         msg = error.response.data.message;
@@ -211,6 +233,7 @@ const DetalleEvento: React.FC = () => {
     }
   };
 
+  // Verifica si al menos un participante tiene calificacion para habilitar la exportacion STPS
   const hasCalificaciones = eventWorkers.some(w => w.calificacion !== null && w.calificacion !== undefined);
 
   return (
@@ -247,6 +270,64 @@ const DetalleEvento: React.FC = () => {
         >
           Generar SCPM-07
         </button>
+      </div>
+
+      <div style={{marginTop: '1.5rem', padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '4px', border: '1px solid #ddd'}}>
+        <h3>Agregar Nuevo Trabajador</h3>
+        <form onSubmit={async (e) => {
+          e.preventDefault();
+          const form = e.target as HTMLFormElement;
+          const ficha = (form.elements.namedItem('ficha') as HTMLInputElement).value;
+          const nombre = (form.elements.namedItem('nombre') as HTMLInputElement).value;
+          const curp = (form.elements.namedItem('curp') as HTMLInputElement).value;
+          const categoria = (form.elements.namedItem('categoria') as HTMLInputElement).value;
+          const nivel = (form.elements.namedItem('nivel') as HTMLInputElement).value;
+          const departamento = (form.elements.namedItem('departamento') as HTMLInputElement).value;
+          
+          if(!ficha) {
+            Swal.fire('Error', 'La Ficha es requerida', 'error');
+            return;
+          }
+
+          try {
+            const res = await api.post(`/evento/${id}/trabajador`, { ficha, nombre, curp, categoria, nivel, departamento });
+            if(res.data.status === 'success') {
+              Swal.fire('¡Éxito!', 'Trabajador agregado correctamente. Su documentación ha sido generada y se incluirá en el paquete ZIP.', 'success');
+              form.reset();
+              fetchTrabajadoresEvento(id!);
+            }
+          } catch(err: any) {
+            Swal.fire('Error', 'Error: ' + (err.response?.data?.message || err.message), 'error');
+          }
+        }} style={{display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap'}}>
+          <div>
+            <label style={{display: 'block', fontWeight: 'bold'}}>Ficha: *</label>
+            <input type="text" name="ficha" required style={{padding: '8px', width: '100px'}} />
+          </div>
+          <div>
+            <label style={{display: 'block', fontWeight: 'bold'}}>Nombre Completo:</label>
+            <input type="text" name="nombre" placeholder="(Opcional)" style={{padding: '8px', width: '250px'}} />
+          </div>
+          <div>
+            <label style={{display: 'block', fontWeight: 'bold'}}>CURP:</label>
+            <input type="text" name="curp" style={{padding: '8px', width: '180px'}} />
+          </div>
+          <div>
+            <label style={{display: 'block', fontWeight: 'bold'}}>Categoría:</label>
+            <input type="text" name="categoria" style={{padding: '8px', width: '150px'}} />
+          </div>
+          <div>
+            <label style={{display: 'block', fontWeight: 'bold'}}>Nivel:</label>
+            <input type="text" name="nivel" style={{padding: '8px', width: '80px'}} />
+          </div>
+          <div>
+            <label style={{display: 'block', fontWeight: 'bold'}}>Depto:</label>
+            <input type="text" name="departamento" style={{padding: '8px', width: '150px'}} />
+          </div>
+          <button type="submit" style={{backgroundColor: '#007bff', color: '#fff', padding: '9px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>
+            Agregar Trabajador
+          </button>
+        </form>
       </div>
 
       <div style={{ overflowX: 'auto', marginTop: '1.5rem' }}>

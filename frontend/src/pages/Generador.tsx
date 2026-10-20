@@ -1,7 +1,23 @@
+/**
+ * Vista Principal de Gestion y Generacion de Expedientes (`Generador.tsx`).
+ *
+ * Guia para practicantes:
+ * Implementa el asistente paso a paso (Wizard) de 3 etapas para automatizar un expediente:
+ * - Paso 1 (`handlePdfExtract` -> `POST /api/extract-pdf`):
+ *   Recibe el PDF oficial de asistencia (`SCPM-01`) y descarga un archivo Excel con los
+ *   participantes y datos generales extraidos automaticamente.
+ * - Paso 2 (`handleGenerate` -> `POST /api/generate-docs`):
+ *   Permite consultar/actualizar la fase del evento (1 a 5), subir el Excel validado (y
+ *   opcionalmente el `SCPM-03.docx` lleno para extraer el Supervisor Tecnico), elegir el tipo
+ *   de curso (`Actualizacion` o `Ascenso`) y seleccionar que formatos oficiales generar.
+ * - Paso 3 (`downloadZip` -> `GET /api/download-docs/<id_evento>`):
+ *   Solicita la conversion a PDF mediante Gotenberg y descarga el archivo `Expediente_<id>.zip`.
+ */
 import React, { useState } from 'react';
 import Swal from 'sweetalert2';
 import api from '../services/api';
 
+// Nombres de las 5 fases mostradas en el indicador de progreso (stepper)
 const fases = [
   "Registro / Programación",
   "Ejecución del Evento",
@@ -9,6 +25,8 @@ const fases = [
   "Integración de Expediente",
   "Cierre / Firmas"
 ];
+
+// Catalogo de plantillas seleccionables desde la interfaz
 const todasLasPlantillas = [
   '1. Cédula registro actualizado 2025 COMBIANADA.docx',
   '2. Constancias de Habilidades DC-3 2026 COMBINADA.docx',
@@ -45,12 +63,14 @@ const Generador: React.FC = () => {
     setTipoCurso(val);
   };
 
+  // Alterna la seleccion individual de cada plantilla en la lista de checkboxes
   const handleDocSelection = (doc: string) => {
     setSelectedDocs(prev => 
       prev.includes(doc) ? prev.filter(d => d !== doc) : [...prev, doc]
     );
   };
 
+  // Paso 1: Envia el PDF SCPM-01 al backend y descarga el archivo Excel con la lista extraida
   const handlePdfExtract = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pdfFile) {
@@ -92,6 +112,7 @@ const Generador: React.FC = () => {
     }
   };
 
+  // Consulta en base de datos si el ID de evento ya existe y en que fase se encuentra
   const handleSearchEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!eventId) {
@@ -125,6 +146,7 @@ const Generador: React.FC = () => {
     }
   };
 
+  // Permite cambiar manualmente la fase actual del evento haciendo clic en el stepper
   const handleUpdatePhase = async (newPhase: number) => {
     if (!eventId) {
       setStatus({ type: 'error', message: 'Escribe el ID del evento primero.' });
@@ -142,6 +164,7 @@ const Generador: React.FC = () => {
     }
   };
 
+  // Paso 2: Envia el Excel validado y los parametros seleccionados para poblar las plantillas en el servidor
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file || !eventId) {
@@ -176,6 +199,7 @@ const Generador: React.FC = () => {
     }
   };
 
+  // Paso 3: Descarga el archivo ZIP con todos los formatos y el PDF Maestro unificado
   const downloadZip = async (id_evento_descarga: string) => {
     setLoadingMessage('Convirtiendo a PDF y empaquetando en ZIP. Esto puede tardar...');
     try {

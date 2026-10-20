@@ -1,21 +1,48 @@
+"""
+Controlador del Gestor de Plantillas (`template_controller.py`).
+
+Guia para practicantes:
+Cuando un usuario disena o actualiza una plantilla en Word (.docx) o Excel (.xlsx/.xlsm),
+suele escribir etiquetas amigables entre corchetes como `[NOMBRE_COMPLETO]` o `[FICHA]`.
+Sin embargo, Word y Excel guardan su contenido en archivos XML internos (dentro de un ZIP)
+y frecuentemente parten una palabra en multiples nodos XML (`<w:r><w:t>[</w:t></w:r>...`).
+Este controlador:
+1. Abre el archivo `.docx`/`.xlsx`/`.xlsm` como un paquete ZIP en memoria.
+2. Transforma las etiquetas simples `[ETIQUETA]` a variables Jinja2 `{{ variable }}`,
+   incluso si Word dividio la etiqueta en varios fragmentos XML.
+3. Guarda la plantilla lista para usarse en `backend/templates/`.
+"""
 import os
 import zipfile
 import io
 import re
 from flask import request, jsonify
+from ..utils.security import error_response
+
 
 def upload_template():
+    """
+    Endpoint `POST /api/upload-template`.
+    Procesa y almacena una plantilla `.docx`, `.xlsx`, `.xlsm` o `.xls` en `backend/templates/`.
+    """
     if 'file' not in request.files:
         return jsonify({"status": "error", "message": "No se subió ningún archivo"}), 400
-    
+
     file = request.files['file']
-    if not (file.filename.endswith('.docx') or file.filename.endswith('.xlsx') or file.filename.endswith('.xlsm') or file.filename.endswith('.xls')):
-        return jsonify({"status": "error", "message": "Solo se permiten archivos .docx, .xlsx, .xlsm o .xls"}), 400
+    if not (
+        file.filename.endswith('.docx')
+        or file.filename.endswith('.xlsx')
+        or file.filename.endswith('.xlsm')
+        or file.filename.endswith('.xls')
+    ):
+        return jsonify({
+            "status": "error",
+            "message": "Solo se permiten archivos .docx, .xlsx, .xlsm o .xls"
+        }), 400
 
     filename = file.filename
-    
-    filename = file.filename
-    # Define mapping from simple tags to jinja tags
+
+    # Diccionario de traduccion: etiquetas de usuario -> variables Jinja2 consumidas por docxtpl/openpyxl
     tag_mapping = {
         '[FICHA]': '{{ ficha }}',
         '[APELLIDO_PATERNO]': '{{ apellido_paterno }}',
@@ -43,13 +70,16 @@ def upload_template():
     }
 
     def replace_tags(xml_str):
-        # A simple replace works for tags not split across runs
+        """
+        Reemplaza etiquetas `[CAMPO]` por `{{ campo }}` dentro del XML de Word/Excel.
+        Maneja tanto etiquetas contiguas como etiquetas fragmentadas por etiquetas XML intermedias.
+        """
+        # Paso 1: Reemplazo directo para etiquetas que no fueron divididas en varios nodos XML
         for simple_tag, jinja_tag in tag_mapping.items():
             xml_str = xml_str.replace(simple_tag, jinja_tag)
-        
-        # A more robust regex to handle split tags in XML:
-        # e.g. [</w:t></w:r><w:r><w:t>NOMBRE_EVENTO</w:t></w:r><w:r><w:t>]
-        # We find all matches of the simple tag ignoring XML tags between letters
+
+        # Paso 2: Expresion regular tolerante a etiquetas XML intercaladas entre caracteres
+        # Ejemplo: [</w:t></w:r><w:r><w:t>NOMBRE_EVENTO</w:t></w:r><w:r><w:t>]
         for simple_tag, jinja_tag in tag_mapping.items():
             pattern_str = ''
             for char in simple_tag:
@@ -59,7 +89,7 @@ def upload_template():
                     pattern_str += r'\]'
                 else:
                     pattern_str += re.escape(char) + r'(?:<[^>]+>)*'
-            
+
             def repl(match, jt=jinja_tag):
                 m_str = match.group(0)
                 parts = re.split(r'(<[^>]+>)', m_str)
@@ -69,12 +99,12 @@ def upload_template():
                         if first_text_idx == -1:
                             first_text_idx = i
                         parts[i] = ""
-                
+
                 if first_text_idx != -1:
                     parts[first_text_idx] = jt
                 else:
                     parts[0] = jt
-                    
+
                 return "".join(parts)
 
             xml_str = re.sub(pattern_str, repl, xml_str)
@@ -86,49 +116,49 @@ def upload_template():
         os.makedirs(templates_dir, exist_ok=True)
         save_path = os.path.join(templates_dir, filename)
 
+        # Los archivos .xls antiguos son binarios (no ZIP/XML), por lo que se guardan directamente
         if filename.endswith('.xls'):
             file.seek(0)
             with open(save_path, 'wb') as f:
                 f.write(file.read())
             return jsonify({
-                "status": "success", 
+                "status": "success",
                 "message": f"Plantilla '{filename}' guardada exitosamente.",
-                "warning": "Los archivos .xls (Formato 97-2003) no soportan el reemplazo automático de etiquetas de datos. Si requiere reemplazar etiquetas como [NOMBRE], por favor guarde la plantilla en formato .xlsx e intente nuevamente."
+                "warning": (
+                    "Los archivos .xls (Formato 97-2003) no soportan el reemplazo automático de etiquetas de datos. "
+                    "Si requiere reemplazar etiquetas como [NOMBRE], por favor guarde la plantilla en formato .xlsx e intente nuevamente."
+                )
             }), 200
 
-        # Read the docx/xlsx file as a zip
+        # Los formatos modernos (.docx, .xlsx, .xlsm) son contenedores ZIP con archivos XML internos
         file_bytes = file.read()
-        
-        # We will process the XML directly to replace the simple tags with jinja tags
         out_bytes = io.BytesIO()
         with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as zin:
             with zipfile.ZipFile(out_bytes, 'w') as zout:
                 for item in zin.infolist():
                     content = zin.read(item.filename)
+                    # Solo procesamos los XML donde reside el texto visible del documento o libro
                     if item.filename.endswith('.xml') and (
-                        item.filename.startswith('word/document') or 
-                        item.filename.startswith('word/header') or 
-                        item.filename.startswith('word/footer') or
-                        item.filename.startswith('xl/sharedStrings') or
-                        item.filename.startswith('xl/worksheets/sheet')
+                        item.filename.startswith('word/document')
+                        or item.filename.startswith('word/header')
+                        or item.filename.startswith('word/footer')
+                        or item.filename.startswith('xl/sharedStrings')
+                        or item.filename.startswith('xl/worksheets/sheet')
                     ):
                         xml_str = content.decode('utf-8')
                         xml_str = replace_tags(xml_str)
                         content = xml_str.encode('utf-8')
                     zout.writestr(item, content)
-        
+
         out_bytes.seek(0)
-        
-        # Save the new template in templates directory
-        # The frontend expects them in backend/templates
-        templates_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'templates')
-        os.makedirs(templates_dir, exist_ok=True)
-        save_path = os.path.join(templates_dir, filename)
-        
+
         with open(save_path, 'wb') as f:
             f.write(out_bytes.read())
-            
-        return jsonify({"status": "success", "message": f"Plantilla '{filename}' procesada y guardada exitosamente."}), 200
+
+        return jsonify({
+            "status": "success",
+            "message": f"Plantilla '{filename}' procesada y guardada exitosamente."
+        }), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Error al procesar la plantilla: {str(e)}"}), 500
+        return error_response("Error al procesar la plantilla: ", 500, e)

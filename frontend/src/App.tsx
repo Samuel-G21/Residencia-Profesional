@@ -1,3 +1,18 @@
+/**
+ * Componente Raiz y Enrutador Principal de la Aplicacion (`App.tsx`).
+ *
+ * Guia para practicantes:
+ * 1. Configura el interceptor global de Axios para enviar el token JWT almacenado en `sessionStorage`.
+ * 2. Gestiona el estado de autenticacion (`isAuthenticated`) y cierra automaticamente la sesion
+ *    tras 15 minutos de inactividad del usuario (mouse, teclado, scroll o clic).
+ * 3. Define la barra de navegacion institucional y las rutas principales con `react-router-dom`:
+ *    - `/`             -> Generador de expedientes (flujo de 3 pasos)
+ *    - `/historial`    -> Historial de eventos registrados
+ *    - `/dashboard`    -> Dashboard estadistico y graficas
+ *    - `/catalogos`    -> Actualizacion de catalogos CURP y STPS
+ *    - `/plantillas`   -> Gestor de plantillas .docx / .xlsx
+ *    - `/evento/:id`   -> Detalle de un evento (participantes, bajas, calificaciones SCPM-07 y STPS)
+ */
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -16,7 +31,7 @@ import './App.css';
 
 const queryClient = new QueryClient();
 
-// Add axios interceptor here so it works globally
+// Interceptor global: adjunta automaticamente el token JWT en cada peticion hacia el backend
 api.interceptors.request.use((config) => {
   const token = sessionStorage.getItem('token');
   if (token) {
@@ -31,6 +46,7 @@ const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(() => sessionStorage.getItem('isAuthenticated') === 'true');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
+  // Temporizador de cierre automatico de sesion tras 15 minutos sin actividad
   useEffect(() => {
     let timeout: NodeJS.Timeout;
     const resetTimeout = () => {
@@ -66,6 +82,7 @@ const App: React.FC = () => {
     setIsAuthenticated(false);
   };
 
+  // Si el usuario no ha iniciado sesion, se muestra unicamente la pantalla de Login
   if (!isAuthenticated) {
     return <Login onLogin={() => setIsAuthenticated(true)} />;
   }

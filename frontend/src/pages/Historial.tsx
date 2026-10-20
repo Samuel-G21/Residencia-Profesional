@@ -1,8 +1,20 @@
+/**
+ * Vista del Historial de Eventos y Proyectos (`Historial.tsx`).
+ *
+ * Guia para practicantes:
+ * Consulta `GET /api/cursos` para listar todos los eventos de capacitacion registrados,
+ * mostrando su ID, nombre, total de participantes, fase actual (1 a 5) y estado (`ACTIVO`,
+ * `FINALIZADO` o `CANCELADO`). Desde cada fila permite:
+ * - Navegar a la vista de detalle del evento (`/evento/:id`).
+ * - Descargar el paquete consolidado `Expediente_<id_evento>.zip`.
+ * - Eliminar el evento de la base de datos previa confirmacion.
+ */
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import api from '../services/api';
 
+// Etiquetas descriptivas para las 5 fases del flujo de trabajo institucional
 const fases = [
   "Registro / Programación",
   "Ejecución del Evento",
@@ -15,6 +27,7 @@ const Historial: React.FC = () => {
   const [historialCursos, setHistorialCursos] = useState<any[]>([]);
   const navigate = useNavigate();
 
+  // Obtiene la lista actualizada de cursos desde el backend
   const fetchHistorial = async () => {
     try {
       const response = await api.get('/cursos');
@@ -34,6 +47,7 @@ const Historial: React.FC = () => {
     navigate(`/evento/${id_evento}`);
   };
 
+  // Descarga el archivo .zip con todos los documentos y el PDF Maestro del evento
   const downloadZip = async (id_evento_descarga: string) => {
     try {
       const response = await api.get(`/download-docs/${id_evento_descarga}`, { responseType: 'blob' });
@@ -50,6 +64,7 @@ const Historial: React.FC = () => {
     }
   };
 
+  // Solicita confirmacion antes de eliminar un evento y su historial en cascada
   const handleDeleteEvent = async (id_evento: string) => {
     const result = await Swal.fire({
       title: '¿Eliminar Evento?',
@@ -108,7 +123,7 @@ const Historial: React.FC = () => {
                   </td>
                   <td style={{ padding: '12px' }}>{fases[curso.fase_actual - 1] || `Fase ${curso.fase_actual}`}</td>
                   <td style={{ padding: '12px', display: 'flex', gap: '8px' }}>
-                    <button onClick={() => handleVerDetalles(curso.id_evento)} style={{ padding: '6px 12px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }} title="Detalles">⚙️ Detalles</button>
+                    <button onClick={() => handleVerDetalles(curso.id_evento)} style={{ padding: '6px 12px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }} title="Detalles">Detalles</button>
                     <button 
                       onClick={() => downloadZip(curso.id_evento)} 
                       style={{ padding: '6px 12px', backgroundColor: '#1a3b2b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}
@@ -121,7 +136,7 @@ const Historial: React.FC = () => {
                       style={{ padding: '6px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}
                       title="Eliminar Proyecto"
                     >
-                      🗑️
+                      Eliminar
                     </button>
                   </td>
                 </tr>

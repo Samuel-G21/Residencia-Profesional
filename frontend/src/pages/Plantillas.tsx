@@ -1,3 +1,12 @@
+/**
+ * Vista del Gestor de Plantillas (`Plantillas.tsx`).
+ *
+ * Guia para practicantes:
+ * Permite subir plantillas personalizadas en formato Word (`.docx`) o Excel (`.xlsx`, `.xlsm`, `.xls`)
+ * al endpoint `POST /api/upload-template`. Muestra ademas una guia interactiva (cheatsheet) con las
+ * etiquetas disponibles (como `[FICHA]` o `[NOMBRE_COMPLETO]`) que al hacer clic se copian al
+ * portapapeles y que el backend convierte automaticamente a variables Jinja2.
+ */
 import React, { useState } from 'react';
 import Swal from 'sweetalert2';
 import api from '../services/api';

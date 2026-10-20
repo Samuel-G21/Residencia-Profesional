@@ -1,3 +1,16 @@
+/**
+ * Vista del Dashboard Estadistico de Capacitacion (`Dashboard.tsx`).
+ *
+ * Guia para practicantes:
+ * Consulta `GET /api/stats` y renderiza:
+ * 1. Tarjetas de indicadores clave (KPIs): Eventos registrados, finalizados, cancelados,
+ *    capacitaciones totales, bajas, promedio general, aprobados y reprobados.
+ * 2. Alerta automatica de Plan de Accion segun el indice de reprobacion.
+ * 3. Graficas interactivas con `recharts` (Top 5 eventos, distribucion por fase, estado de
+ *    cursos, estado de trabajadores, promedio por curso y distribucion por genero).
+ * 4. Exportacion de metricas a archivo `.csv` (`handleExportDashboard`) y captura visual de
+ *    las graficas a imagen `.png` mediante `html2canvas` (`handleExportDashboardImage`).
+ */
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import html2canvas from 'html2canvas';
@@ -16,6 +29,7 @@ const Dashboard: React.FC = () => {
 
   const [loadingMessage, setLoadingMessage] = useState('');
 
+  // Obtiene las estadisticas globales desde el backend
   const fetchStats = async () => {
     try {
       const response = await api.get('/stats');
@@ -31,6 +45,7 @@ const Dashboard: React.FC = () => {
     fetchStats();
   }, []);
 
+  // Genera y descarga un archivo CSV con el resumen de KPIs, Top 5 eventos y conteo por fase
   const handleExportDashboard = () => {
     const csvContent = [
       ['KPI', 'Valor'],
@@ -49,7 +64,7 @@ const Dashboard: React.FC = () => {
       ['Fase', 'Eventos'],
       ...(stats.cursos_por_fase || []).map((f: any) => [`Fase ${f.fase_actual}`, f.cantidad])
     ].map(e => e.join(",")).join("\n");
-    
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -59,6 +74,7 @@ const Dashboard: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  // Captura el contenedor DOM `#dashboard-charts` y lo descarga como imagen PNG
   const handleExportDashboardImage = async () => {
     const dashboardEl = document.getElementById('dashboard-charts');
     if (!dashboardEl) return;
@@ -70,7 +86,7 @@ const Dashboard: React.FC = () => {
       link.href = image;
       link.download = 'dashboard_graficas.png';
       link.click();
-    } catch(err) {
+    } catch (err) {
       Swal.fire('Error', 'Error al exportar gráficas', 'error');
     } finally {
       setLoadingMessage('');
@@ -89,12 +105,12 @@ const Dashboard: React.FC = () => {
       <div className="dashboard-header">
         <h2>Dashboard Estadístico de Capacitación</h2>
         <div>
-          <button onClick={handleExportDashboardImage} className="btn-secondary" style={{ marginRight: '10px' }}>🖼️ Exportar Gráficas (Imagen)</button>
-          <button onClick={handleExportDashboard} className="btn-secondary" style={{ marginRight: '10px' }}>📥 Exportar CSV</button>
+          <button onClick={handleExportDashboardImage} className="btn-secondary" style={{ marginRight: '10px' }}> Exportar Gráficas (Imagen)</button>
+          <button onClick={handleExportDashboard} className="btn-secondary" style={{ marginRight: '10px' }}> Exportar CSV</button>
           <button onClick={fetchStats} className="btn-refresh"> Actualizar</button>
         </div>
       </div>
-      
+
       <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
         <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #1a3b2b' }}>
           <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Eventos</h3>
@@ -138,7 +154,7 @@ const Dashboard: React.FC = () => {
       )}
 
       <div id="dashboard-charts" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem', backgroundColor: '#fff', padding: '1rem' }}>
-        
+
         {/* Gráfica 1: Top 5 Eventos (BarChart) */}
         <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
           <h3 style={{ borderBottom: '2px solid #b38e5d', paddingBottom: '0.5rem', marginTop: 0 }}>Top 5 Eventos (Participantes)</h3>
@@ -146,7 +162,7 @@ const Dashboard: React.FC = () => {
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={stats.top_cursos} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="nombre_evento" tick={{fontSize: 10}} tickFormatter={(val: string) => val.substring(0, 10) + '...'} />
+                <XAxis dataKey="nombre_evento" tick={{ fontSize: 10 }} tickFormatter={(val: string) => val.substring(0, 10) + '...'} />
                 <YAxis />
                 <RechartsTooltip />
                 <Bar dataKey="total_capacitados" fill="#1a3b2b" name="Participantes" />
@@ -182,12 +198,12 @@ const Dashboard: React.FC = () => {
           {stats.total_cursos > 0 ? (
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
-                <Pie 
+                <Pie
                   data={[
                     { name: 'Activos', value: stats.total_cursos - (stats.cursos_cancelados || 0) - (stats.cursos_finalizados || 0) },
                     { name: 'Cancelados', value: stats.cursos_cancelados || 0 },
                     { name: 'Finalizados', value: stats.cursos_finalizados || 0 }
-                  ]} 
+                  ]}
                   dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={(entry) => entry.name}
                 >
                   <Cell fill="#1a3b2b" />
@@ -204,15 +220,15 @@ const Dashboard: React.FC = () => {
 
         {/* Gráfica 2.2: Estado de Trabajadores (PieChart) */}
         <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
-          <h3 style={{ borderBottom: '2px solid #dc3545', paddingBottom: '0.5rem', marginTop: 0 }}>Estado de Trabajadores</h3>
+          <h3 style={{ borderBottom: '2px solid #dc3545', paddingBottom: '0.5rem', marginTop: '0' }}>Estado de Trabajadores</h3>
           {stats.total_trabajadores > 0 ? (
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
-                <Pie 
+                <Pie
                   data={[
                     { name: 'Activos', value: stats.total_trabajadores - (stats.trabajadores_baja || 0) },
                     { name: 'Bajas', value: stats.trabajadores_baja || 0 }
-                  ]} 
+                  ]}
                   dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={(entry) => entry.name}
                 >
                   <Cell fill="#1a3b2b" />
@@ -233,7 +249,7 @@ const Dashboard: React.FC = () => {
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={stats.promedios_cursos} margin={{ top: 10, right: 10, left: -20, bottom: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="nombre_evento" tick={{fontSize: 10}} angle={-45} textAnchor="end" />
+                <XAxis dataKey="nombre_evento" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" />
                 <YAxis domain={[0, 10]} />
                 <RechartsTooltip />
                 <Bar dataKey="promedio_curso" fill="#17a2b8" name="Promedio" />
@@ -251,10 +267,10 @@ const Dashboard: React.FC = () => {
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={stats.genero_por_curso} margin={{ top: 10, right: 10, left: -20, bottom: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="nombre_evento" tick={{fontSize: 10}} angle={-45} textAnchor="end" />
+                <XAxis dataKey="nombre_evento" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" />
                 <YAxis />
                 <RechartsTooltip />
-                <Legend verticalAlign="top" height={36}/>
+                <Legend verticalAlign="top" height={36} />
                 <Bar dataKey="hombres" fill="#1a3b2b" name="Hombres" />
                 <Bar dataKey="mujeres" fill="#b38e5d" name="Mujeres" />
               </BarChart>

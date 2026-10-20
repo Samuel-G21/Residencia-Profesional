@@ -1,3 +1,11 @@
+/**
+ * Vista de Administracion de Catalogos (`Catalogos.tsx`).
+ *
+ * Guia para practicantes:
+ * Permite subir un archivo `.xlsx` al endpoint `POST /api/update-catalog` para actualizar:
+ * - `'curp'`: El Catalogo Maestro de CURP (`CURP.xlsx` y tabla `curps` en MySQL).
+ * - `'stps'`: Los catalogos de referencia de la STPS (`STPS.xlsx`).
+ */
 import React, { useState } from 'react';
 import api from '../services/api';
 

@@ -1,3 +1,11 @@
+/**
+ * Vista de Inicio de Sesion (`Login.tsx`).
+ *
+ * Guia para practicantes:
+ * Envia las credenciales (`username` y `password`) al endpoint `POST /api/auth/login`.
+ * Si la autenticacion es exitosa, guarda el token JWT en `sessionStorage` y notifica
+ * al componente padre (`App.tsx`) mediante el callback `onLogin()`.
+ */
 import React, { useState } from 'react';
 import api from '../services/api';
 
