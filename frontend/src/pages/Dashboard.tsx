@@ -2,73 +2,89 @@
  * Vista del Dashboard Estadistico de Capacitacion (`Dashboard.tsx`).
  *
  * Guia para practicantes:
- * Consulta `GET /api/stats` y renderiza:
+ * Consulta `GET /api/stats?anio=YYYY` (por defecto el año en curso, reiniciandose cada año) y renderiza:
  * 1. Tarjetas de indicadores clave (KPIs): Eventos registrados, finalizados, cancelados,
- *    capacitaciones totales, bajas, promedio general, aprobados y reprobados.
- * 2. Alerta automatica de Plan de Accion segun el indice de reprobacion.
+ *    capacitaciones totales, bajas, promedio general, aprobados y reprobados del año.
+ * 2. Alerta automatica de Plan de Accion segun el indice de reprobacion anual.
  * 3. Graficas interactivas con `recharts` (Top 5 eventos, distribucion por fase, estado de
- *    cursos, estado de trabajadores, promedio por curso y distribucion por genero).
+ *    cursos, estado de trabajadores, promedio por curso y distribucion de genero por curso).
  * 4. Exportacion de metricas a archivo `.csv` (`handleExportDashboard`) y captura visual de
  *    las graficas a imagen `.png` mediante `html2canvas` (`handleExportDashboardImage`).
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import html2canvas from 'html2canvas';
 import Swal from 'sweetalert2';
 import api from '../services/api';
 
 const Dashboard: React.FC = () => {
+  const currentCalendarYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState<number>(currentCalendarYear);
+
   const [stats, setStats] = useState<any>({
+    anio: currentCalendarYear,
+    anio_actual: currentCalendarYear,
+    anios_disponibles: [currentCalendarYear],
     total_cursos: 0,
     total_trabajadores: 0,
     trabajadores_unicos: 0,
     top_cursos: [],
     cursos_por_fase: [],
-    cursos_recientes: []
+    cursos_recientes: [],
+    promedios_cursos: [],
+    hombres: 0,
+    mujeres: 0,
+    genero_por_curso: []
   });
 
   const [loadingMessage, setLoadingMessage] = useState('');
 
-  // Obtiene las estadisticas globales desde el backend
-  const fetchStats = async () => {
+  // Obtiene las estadisticas del año seleccionado desde el backend (por defecto el año en curso)
+  const fetchStats = useCallback(async (anioToFetch: number = selectedYear) => {
     try {
-      const response = await api.get('/stats');
+      const response = await api.get('/stats', { params: { anio: anioToFetch } });
       if (response.data.status === 'success') {
         setStats(response.data.data);
       }
     } catch (error) {
       console.error('Error al cargar estadísticas:', error);
     }
-  };
+  }, [selectedYear]);
 
   useEffect(() => {
-    fetchStats();
-  }, []);
+    fetchStats(selectedYear);
+  }, [selectedYear, fetchStats]);
 
-  // Genera y descarga un archivo CSV con el resumen de KPIs, Top 5 eventos y conteo por fase
+  // Genera y descarga un archivo CSV con el resumen anual de KPIs, Top 5 eventos, fases y genero por curso
   const handleExportDashboard = () => {
     const csvContent = [
       ['KPI', 'Valor'],
+      ['Año del Ejercicio', selectedYear],
       ['Eventos Registrados', stats.total_cursos],
       ['Total Capacitaciones', stats.total_trabajadores],
-      ['Trabajadores de Baja', stats.trabajadores_baja],
-      ['Eventos Cancelados', stats.cursos_cancelados],
+      ['Trabajadores de Baja', stats.trabajadores_baja ?? 0],
+      ['Eventos Cancelados', stats.cursos_cancelados ?? 0],
       ['Eventos Finalizados', stats.cursos_finalizados ?? 0],
-      ['Promedio General', stats.promedio_general],
-      ['Trabajadores Reprobados', stats.reprobados],
-      ['Trabajadores Aprobados', stats.aprobados],
+      ['Promedio General', stats.promedio_general ?? 0],
+      ['Trabajadores Reprobados', stats.reprobados ?? 0],
+      ['Trabajadores Aprobados', stats.aprobados ?? 0],
+      ['Total Hombres', stats.hombres ?? 0],
+      ['Total Mujeres', stats.mujeres ?? 0],
       [],
       ['Top 5 Eventos', 'Participantes'],
-      ...(stats.top_cursos || []).map((c: any) => [c.nombre_evento, c.total_capacitados]),
+      ...(stats.top_cursos || []).map((c: any) => [`"${c.nombre_evento}"`, c.total_capacitados]),
       [],
       ['Fase', 'Eventos'],
-      ...(stats.cursos_por_fase || []).map((f: any) => [`Fase ${f.fase_actual}`, f.cantidad])
+      ...(stats.cursos_por_fase || []).map((f: any) => [`Fase ${f.fase_actual}`, f.cantidad]),
+      [],
+      ['Evento (Distribución por Género)', 'Hombres', 'Mujeres'],
+      ...(stats.genero_por_curso || []).map((g: any) => [`"${g.nombre_evento}"`, g.hombres, g.mujeres])
     ].map(e => e.join(",")).join("\n");
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.setAttribute('download', 'dashboard_stats.csv');
+    link.setAttribute('download', `dashboard_stats_${selectedYear}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -84,7 +100,7 @@ const Dashboard: React.FC = () => {
       const image = canvas.toDataURL("image/png", 1.0);
       const link = document.createElement('a');
       link.href = image;
-      link.download = 'dashboard_graficas.png';
+      link.download = `dashboard_graficas_${selectedYear}.png`;
       link.click();
     } catch (err) {
       Swal.fire('Error', 'Error al exportar gráficas', 'error');
@@ -92,6 +108,10 @@ const Dashboard: React.FC = () => {
       setLoadingMessage('');
     }
   };
+
+  const availableYears: number[] = Array.isArray(stats.anios_disponibles) && stats.anios_disponibles.length > 0
+    ? stats.anios_disponibles
+    : [currentCalendarYear];
 
   return (
     <section className="card full-width-card fade-in">
@@ -102,18 +122,46 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      <div className="dashboard-header">
-        <h2>Dashboard Estadístico de Capacitación</h2>
+      <div className="dashboard-header" style={{ flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <button onClick={handleExportDashboardImage} className="btn-secondary" style={{ marginRight: '10px' }}> Exportar Gráficas (Imagen)</button>
-          <button onClick={handleExportDashboard} className="btn-secondary" style={{ marginRight: '10px' }}> Exportar CSV</button>
-          <button onClick={fetchStats} className="btn-refresh"> Actualizar</button>
+          <h2 style={{ marginBottom: '0.25rem' }}>Dashboard Estadístico de Capacitación ({selectedYear})</h2>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B' }}>
+            Ejercicio anual {selectedYear} — Las estadísticas se reinician automáticamente cada nuevo año.
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <label htmlFor="dashboard-year-select" style={{ fontWeight: 600, fontSize: '0.9rem', color: '#1a3b2b' }}>
+            Año:
+          </label>
+          <select
+            id="dashboard-year-select"
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(Number(e.target.value))}
+            style={{
+              padding: '0.45rem 0.75rem',
+              borderRadius: '4px',
+              border: '1px solid #1a3b2b',
+              fontWeight: 'bold',
+              color: '#1a3b2b',
+              backgroundColor: '#fff',
+              cursor: 'pointer'
+            }}
+          >
+            {availableYears.map((yr) => (
+              <option key={yr} value={yr}>
+                {yr === currentCalendarYear ? `${yr} (Año actual)` : yr}
+              </option>
+            ))}
+          </select>
+          <button onClick={handleExportDashboardImage} className="btn-secondary" style={{ width: 'auto', marginBottom: 0, padding: '0.5rem 1rem' }}> Exportar Gráficas (Imagen)</button>
+          <button onClick={handleExportDashboard} className="btn-secondary" style={{ width: 'auto', marginBottom: 0, padding: '0.5rem 1rem' }}> Exportar CSV</button>
+          <button onClick={() => fetchStats(selectedYear)} className="btn-refresh"> Actualizar</button>
         </div>
       </div>
 
-      <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+      <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem', marginTop: '1.5rem' }}>
         <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #1a3b2b' }}>
-          <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Eventos</h3>
+          <h3 style={{ margin: 0, fontSize: '1rem', color: '#555' }}>Eventos ({selectedYear})</h3>
           <p className="kpi-number" style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1a3b2b', margin: '5px 0 0 0' }}>{stats.total_cursos}</p>
         </div>
         <div className="kpi-card" style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', borderLeft: '4px solid #28a745' }}>
@@ -163,13 +211,13 @@ const Dashboard: React.FC = () => {
               <BarChart data={stats.top_cursos} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="nombre_evento" tick={{ fontSize: 10 }} tickFormatter={(val: string) => val.substring(0, 10) + '...'} />
-                <YAxis />
+                <YAxis allowDecimals={false} />
                 <RechartsTooltip />
                 <Bar dataKey="total_capacitados" fill="#1a3b2b" name="Participantes" />
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay participantes registrados aún.</p>
+            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay participantes registrados en {selectedYear}.</p>
           )}
         </div>
 
@@ -188,7 +236,7 @@ const Dashboard: React.FC = () => {
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay datos de fases disponibles.</p>
+            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay datos de fases disponibles en {selectedYear}.</p>
           )}
         </div>
 
@@ -214,7 +262,7 @@ const Dashboard: React.FC = () => {
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay cursos registrados aún.</p>
+            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay cursos registrados en {selectedYear}.</p>
           )}
         </div>
 
@@ -238,7 +286,7 @@ const Dashboard: React.FC = () => {
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay trabajadores registrados aún.</p>
+            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay trabajadores registrados en {selectedYear}.</p>
           )}
         </div>
 
@@ -247,28 +295,49 @@ const Dashboard: React.FC = () => {
           <h3 style={{ borderBottom: '2px solid #17a2b8', paddingBottom: '0.5rem', marginTop: 0 }}>Promedio de Calificación por Curso</h3>
           {stats.promedios_cursos && stats.promedios_cursos.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={stats.promedios_cursos} margin={{ top: 10, right: 10, left: -20, bottom: 40 }}>
+              <BarChart data={stats.promedios_cursos} margin={{ top: 10, right: 10, left: -20, bottom: 50 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="nombre_evento" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" />
+                <XAxis
+                  dataKey="nombre_evento"
+                  tick={{ fontSize: 10 }}
+                  angle={-35}
+                  textAnchor="end"
+                  interval={0}
+                  height={60}
+                  tickFormatter={(val: string) => (val && val.length > 22 ? val.substring(0, 22) + '...' : val)}
+                />
                 <YAxis domain={[0, 10]} />
                 <RechartsTooltip />
                 <Bar dataKey="promedio_curso" fill="#17a2b8" name="Promedio" />
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay calificaciones registradas aún.</p>
+            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay calificaciones registradas en {selectedYear}.</p>
           )}
         </div>
 
         {/* Gráfica 4: Hombres y Mujeres por Curso (BarChart) */}
         <div className="dashboard-widget" style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '1.5rem', display: 'flex', flexDirection: 'column', gridColumn: '1 / -1' }}>
-          <h3 style={{ borderBottom: '2px solid #6f42c1', paddingBottom: '0.5rem', marginTop: 0 }}>Distribución por Género en Cursos</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #6f42c1', paddingBottom: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <h3 style={{ margin: 0 }}>Distribución por Género de Participantes por Curso</h3>
+            <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#444' }}>
+              Total ({selectedYear}): <span style={{ color: '#1a3b2b' }}>Hombres: {stats.hombres ?? 0}</span> | <span style={{ color: '#b38e5d' }}>Mujeres: {stats.mujeres ?? 0}</span>
+            </span>
+          </div>
           {stats.genero_por_curso && stats.genero_por_curso.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={stats.genero_por_curso} margin={{ top: 10, right: 10, left: -20, bottom: 40 }}>
+            <ResponsiveContainer width="100%" height={320}>
+              <BarChart data={stats.genero_por_curso} margin={{ top: 10, right: 10, left: -20, bottom: 55 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="nombre_evento" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" />
-                <YAxis />
+                <XAxis
+                  dataKey="nombre_evento"
+                  tick={{ fontSize: 10 }}
+                  angle={-35}
+                  textAnchor="end"
+                  interval={0}
+                  height={65}
+                  tickFormatter={(val: string) => (val && val.length > 22 ? val.substring(0, 22) + '...' : val)}
+                />
+                <YAxis allowDecimals={false} />
                 <RechartsTooltip />
                 <Legend verticalAlign="top" height={36} />
                 <Bar dataKey="hombres" fill="#1a3b2b" name="Hombres" />
@@ -276,7 +345,7 @@ const Dashboard: React.FC = () => {
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay datos de género registrados aún.</p>
+            <p style={{ color: '#666', fontStyle: 'italic' }}>No hay datos de género registrados en {selectedYear}.</p>
           )}
         </div>
       </div>

@@ -17,7 +17,9 @@ from flask import jsonify, request
 from ..utils.security import error_response, event_dir, ESTADOS_CERRADOS
 from ..models.course import Curso
 from ..models.history import HistorialCapacitacion
+from ..models.curp import Curp
 from ..models import db
+from .catalog_controller import load_curp_catalog
 from sqlalchemy import text
 import pandas as pd
 import os
@@ -219,19 +221,15 @@ def agregar_trabajador(id_evento):
 
     # Autocompletado opcional desde el catalogo maestro CURP.xlsx
     if not nombre or not data.get('curp'):
-        ruta_curp = os.path.join('catalogos', 'CURP.xlsx')
-        if os.path.exists(ruta_curp):
-            try:
-                df_curp = pd.read_excel(ruta_curp)
-                df_curp.columns = df_curp.columns.str.upper().str.strip()
-                match = df_curp[df_curp['FICHA'].astype(str) == ficha]
-                if not match.empty:
-                    if not nombre and 'NOMBRE' in df_curp.columns:
-                        nombre = str(match.iloc[0]['NOMBRE']).strip().title()
-                    if not data.get('curp') and 'CURP' in df_curp.columns:
-                        data['curp'] = str(match.iloc[0]['CURP']).upper()
-            except Exception as e:
-                print("Error buscando en catalogo:", e)
+        try:
+            catalogo_curps = load_curp_catalog()
+            if ficha in catalogo_curps:
+                if not nombre and catalogo_curps[ficha].get("nombre"):
+                    nombre = catalogo_curps[ficha]["nombre"]
+                if not data.get('curp') and catalogo_curps[ficha].get("curp"):
+                    data['curp'] = catalogo_curps[ficha]["curp"]
+        except Exception as e:
+            print("Error buscando en catalogo:", e)
 
     if not nombre:
         return jsonify({
@@ -244,6 +242,11 @@ def agregar_trabajador(id_evento):
     existe = HistorialCapacitacion.query.filter_by(id_evento=id_evento, ficha_trabajador=ficha).first()
     if existe:
         return jsonify({"status": "error", "message": "El trabajador ya existe en este evento"}), 400
+
+    if data.get('curp'):
+        curp_clean = str(data.get('curp')).strip().upper()[:18]
+        if curp_clean:
+            db.session.merge(Curp(ficha=ficha, curp=curp_clean))
 
     nuevo = HistorialCapacitacion(
         id_evento=id_evento,

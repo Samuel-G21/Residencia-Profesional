@@ -46,6 +46,8 @@ def create_app():
                 db.session.add(user)
                 db.session.commit()
                 app.logger.info("Usuario 'admin' creado automaticamente.")
+            from .controllers.catalog_controller import sync_curps_to_db
+            sync_curps_to_db(force_replace=False)
         except Exception as e:
             db.session.rollback()
             app.logger.error(f"Error al crear usuario admin: {e}")

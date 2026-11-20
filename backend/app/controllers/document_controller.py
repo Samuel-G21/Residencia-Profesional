@@ -38,7 +38,9 @@ from docxtpl import DocxTemplate
 from pypdf import PdfWriter
 from ..models.course import Curso
 from ..models.history import HistorialCapacitacion
+from ..models.curp import Curp
 from ..models import db
+from .catalog_controller import load_curp_catalog
 
 
 def safe_str(val):
@@ -83,17 +85,8 @@ def generate_docs():
             return jsonify({"status": "error", "message": "Sin trabajadores"}), 404
 
         # 2. Carga del catalogo maestro CURP.xlsx en un diccionario en memoria {ficha: curp}
-        diccionario_curps = {}
-        ruta_curp = os.path.join('catalogos', 'CURP.xlsx')
-        if os.path.exists(ruta_curp):
-            try:
-                df_curp = pd.read_excel(ruta_curp)
-                df_curp.columns = df_curp.columns.str.upper().str.strip()
-                if 'FICHA' in df_curp.columns and 'CURP' in df_curp.columns:
-                    for _, r_curp in df_curp.iterrows():
-                        diccionario_curps[safe_str(r_curp['FICHA'])] = str(r_curp['CURP']).upper()
-            except Exception as e:
-                print("Error leyendo CURP.xlsx:", e)
+        catalogo_curps = load_curp_catalog()
+        diccionario_curps = {f: datos["curp"] for f, datos in catalogo_curps.items() if datos.get("curp")}
 
         # 3. Extraccion de metadatos generales del evento desde la primera fila del curso
         row0 = trabajadores_curso.iloc[0]
@@ -251,7 +244,8 @@ def generate_docs():
             cat = str(row.get('CATEGORIA', row.get('CATEGORÍA', ''))).strip()
             niv = str(row.get('NIVEL', '')).strip()
             depto = str(row.get('DEPARTAMENTO', '')).strip()
-            curp = diccionario_curps.get(ficha, "")
+            curp_excel = str(row.get('CURP', '')).strip().upper()
+            curp = curp_excel if curp_excel and curp_excel != 'NAN' else diccionario_curps.get(ficha, "")
 
             lista_participantes.append({
                 "ficha": ficha,
@@ -264,7 +258,8 @@ def generate_docs():
                 historial.append({
                     "id_evento": id_evento,
                     "ficha_trabajador": ficha,
-                    "nombre_trabajador": nombre_completo
+                    "nombre_trabajador": nombre_completo,
+                    "curp": curp[:18] if curp else ""
                 })
 
             ctx_ind = {
@@ -590,6 +585,8 @@ def generate_docs():
             curso.tipo_curso = tipo_curso
 
         for part in historial:
+            if part.get('curp'):
+                db.session.merge(Curp(ficha=part['ficha_trabajador'], curp=part['curp']))
             existe = HistorialCapacitacion.query.filter_by(
                 id_evento=id_evento,
                 ficha_trabajador=part['ficha_trabajador']
@@ -959,17 +956,9 @@ def generate_single_worker_docs(id_evento, worker_data):
     depto = worker_data.get('departamento', '')
 
     if not curp:
-        ruta_curp = os.path.join('catalogos', 'CURP.xlsx')
-        if os.path.exists(ruta_curp):
-            try:
-                df_curp = pd.read_excel(ruta_curp)
-                df_curp.columns = df_curp.columns.str.upper().str.strip()
-                if 'FICHA' in df_curp.columns and 'CURP' in df_curp.columns:
-                    match = df_curp[df_curp['FICHA'].astype(str) == str(ficha)]
-                    if not match.empty:
-                        curp = str(match.iloc[0]['CURP']).upper()
-            except Exception:
-                pass
+        catalogo_curps = load_curp_catalog()
+        if str(ficha) in catalogo_curps:
+            curp = catalogo_curps[str(ficha)].get("curp", "")
 
     ctx_ind = {
         "ficha": ficha,
