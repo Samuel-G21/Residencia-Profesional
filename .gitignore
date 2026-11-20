@@ -40,4 +40,4 @@ Thumbs.db
 *.tar
 
 # Informacion privada
-backend/catalogos/
+backend/catalogos/*
