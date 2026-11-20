@@ -39,3 +39,5 @@ Thumbs.db
 # Imagenes de Docker exportadas
 *.tar
 
+# Informacion privada
+backend/catalogos
